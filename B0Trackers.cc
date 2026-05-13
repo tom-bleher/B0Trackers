@@ -71,7 +71,7 @@ void B0Trackers::Init(){
     m_tree->Branch("xT",&vm_xT);
     m_tree->Branch("yT",&vm_yT);
     m_tree->Branch("zT",&vm_zT);
-    //m_tree->Branch("plane",&vm_plane);
+    m_tree->Branch("plane",&vm_plane);
     m_tree->Branch("module",&vm_module);
     m_tree->Branch("sensor",&vm_sensor);
     m_tree->Branch("detX",&vm_detX);
@@ -267,16 +267,20 @@ trk_phi.clear();
 //    for (const auto& h : simHits) {
     for (const auto *h:simHits){
 
-    	HitClass tempHit;	    
-    	bool primary = (h->getQuality() == 0) ? true : false; // 1 << 30 if produced by secondary (edm4hep docs)
+    	HitClass tempHit;
         auto  mc = h->getParticle();
+        if (!mc.isAvailable()) {
+            // SimTrackerHit has no associated MCParticle; skip to avoid
+            // contaminating the TTree with pdg=0, p=0 rows.
+            continue;
+        }
         int genStat = mc.getGeneratorStatus();
         m_primary = genStat;
         auto  mom = mc.getMomentum();
         m_Truepx = mom.x;
         m_Truepy = mom.y;
         m_Truepz = mom.z;
-        
+
         m_Truep = std::sqrt(mom.x*mom.x + mom.y*mom.y + mom.z*mom.z);
         m_TruePDG = mc.getPDG();
 
@@ -327,13 +331,12 @@ trk_phi.clear();
         m_yT = h->getPosition().y;   // etc.
         m_zT = h->getPosition().z;
 
-        // bit-fields (if needed) ----------------------
-       // m_plane  = m_decoder->get(cid,"plane");
+        // bit-fields (readout is CartesianGridXZ: system,layer,module,sensor,x,z)
+        m_plane  = m_decoder->get(cid,"layer");
         m_module = m_decoder->get(cid,"module");
         m_sensor = m_decoder->get(cid,"sensor");
         m_pixX   = m_decoder->get(cid,"x");
-        m_pixY   = m_decoder->get(cid,"y");
-        m_pixZ   = m_decoder->get(cid,"y");
+        m_pixZ   = m_decoder->get(cid,"z");
 
 
 	vm_xR.push_back(m_xR);
@@ -342,7 +345,7 @@ trk_phi.clear();
         vm_xT.push_back(m_xT);
         vm_yT.push_back(m_yT);
         vm_zT.push_back(m_zT);
-	//vm_plane.push_back(m_plane);
+	vm_plane.push_back(m_plane);
 	vm_module.push_back(m_module);
 	vm_sensor.push_back(m_sensor);
 	vm_detX.push_back(lpos.x());

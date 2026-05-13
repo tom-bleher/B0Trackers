@@ -108,7 +108,7 @@ public:
     double m_Truep;
     int m_TruePDG;
     
-    int m_plane, m_pixX, m_pixY,m_pixZ;
+    int m_plane, m_pixX, m_pixZ;
     int m_module, m_sensor;
     int m_primary;
 
