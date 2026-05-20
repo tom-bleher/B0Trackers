@@ -251,9 +251,15 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         const double pmag = std::sqrt(mom.x*mom.x + mom.y*mom.y + mom.z*mom.z);
 
         const uint64_t cid = h->getCellID();
-        const auto gpos = m_geoSvc->converter()->position(cid);              // cm, global
-        const auto lpos = m_volman.lookupDetElement(cid).nominal()
-                              .worldToLocal(dd4hep::Position(gpos.x(), gpos.y(), gpos.z())); // cm, local
+        dd4hep::Position gpos;
+        dd4hep::Position lpos;
+        try {
+            gpos = m_geoSvc->converter()->position(cid);                     // cm, global
+            lpos = m_volman.lookupDetElement(cid).nominal()
+                       .worldToLocal(dd4hep::Position(gpos.x(), gpos.y(), gpos.z()));
+        } catch (const std::exception&) {
+            continue;  // DD4hep can't resolve this cellID; skip the hit instead of failing the event.
+        }
         const auto truthPos = h->getPosition();
         const int plane  = m_decoder->get(cid, "layer");
         const int module = m_decoder->get(cid, "module");
