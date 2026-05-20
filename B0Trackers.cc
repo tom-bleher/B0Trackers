@@ -1,502 +1,446 @@
-#include <services/rootfile/RootFile_service.h>
 #include "B0Trackers.h"
-//#include "TrackingUtils.h"
+
 #include <cmath>
-#include <vector>
-#include "variables.h"  // for HitClass and Track
+#include <cstdint>
+#include <map>
+#include <mutex>
+#include <tuple>
 
+#include <JANA/Services/JGlobalRootLock.h>
 
-// The following just makes this a JANA plugin
+#include <TFile.h>
+#include <TGeoMatrix.h>
+#include <TTree.h>
+
+#include <edm4hep/MCParticle.h>
+#include <edm4hep/SimTrackerHit.h>
+
+#include <edm4eic/TrackParameters.h>
+
+#include <DD4hep/Objects.h>
+
+#include <services/rootfile/RootFile_service.h>
+
 extern "C" {
-  void InitPlugin(JApplication *app) {
-    InitJANAPlugin(app);
-    app->Add(new B0Trackers);
-  }
+    void InitPlugin(JApplication* app) {
+        InitJANAPlugin(app);
+        app->Add(new B0Trackers);
+    }
 }
 
-//-------------------------------------------
-// InitWithGlobalRootLock
-//-------------------------------------------
-//void B0Trackers::InitWithGlobalRootLock() {
-void B0Trackers::Init(){   
-	
-    auto rf_svc  = GetApplication()->GetService<RootFile_service>();
-//    auto outfile = rf_svc->GetHistFile();
-//    auto outfile = rf_svc->GetFile();
-//    outfile->mkdir("B0Trackers")->cd();
+void B0Trackers::Init() {
+    auto* app = GetApplication();
 
-    TDirectory* histdir =  rf_svc->GetHistFile();
-    TFile* outfile =histdir->GetFile();
+    auto rootLock = app->GetService<JGlobalRootLock>();
+    rootLock->acquire_write_lock();
 
+    auto rf_svc = app->GetService<RootFile_service>();
+    TFile* outfile = rf_svc->GetHistFile()->GetFile();
     outfile->mkdir("B0Trackers")->cd();
 
     m_tree = new TTree("hits", "Truth vs read-out");
-/*    m_tree->Branch("xT", &m_xT); 
-    m_tree->Branch("yT", &m_yT); 
-    m_tree->Branch("zT", &m_zT);
-    m_tree->Branch("xR", &m_xR); 
-    m_tree->Branch("yR", &m_yR); 
-    m_tree->Branch("zR", &m_zR);
-    m_tree->Branch("detX", &m_detX);
-    m_tree->Branch("detY", &m_detY);
-    m_tree->Branch("detZ", &m_detZ);
-    m_tree->Branch("plane", &m_plane);
-    m_tree->Branch("module", &m_module);
-    m_tree->Branch("sensor", &m_sensor);
-    m_tree->Branch("primary",&m_primary);
-    m_tree->Branch("pixX", &m_pixX);
-    m_tree->Branch("pixY", &m_pixY);
-    m_tree->Branch("pixZ", &m_pixZ);
-    m_tree->Branch("eDep",&m_eDep);
-    m_tree->Branch("time",&m_time);
-    m_tree->Branch("hitPath",&m_HitPath);
-    m_tree->Branch("truePx",&m_Truepx);
-    m_tree->Branch("truePy",&m_Truepy);
-    m_tree->Branch("truePz",&m_Truepz);
-    m_tree->Branch("trueP",&m_Truep);
-	m_tree->Branch("truePDG",&m_TruePDG);
-	m_tree->Branch("truePDG",&m_VertexTrue.pdg);
-	m_tree->Branch("trueE",&m_VertexTrue.E);
-	m_tree->Branch("trueTheta",&m_VertexTrue.theta);
-	m_tree->Branch("truePhi",&m_VertexTrue.phi);
-	m_tree->Branch("trueVx",&m_VertexTrue.vx);
-	m_tree->Branch("trueVy",&m_VertexTrue.vy);
-	m_tree->Branch("trueVz",&m_VertexTrue.vz);
-	m_tree->Branch("trueStatus",&m_VertexTrue.status);
-*/
 
-    m_tree->Branch("xR",&vm_xR);
-    m_tree->Branch("yR",&vm_yR);
-    m_tree->Branch("zR",&vm_zR);
-    m_tree->Branch("xT",&vm_xT);
-    m_tree->Branch("yT",&vm_yT);
-    m_tree->Branch("zT",&vm_zT);
-    m_tree->Branch("plane",&vm_plane);
-    m_tree->Branch("module",&vm_module);
-    m_tree->Branch("sensor",&vm_sensor);
-    m_tree->Branch("detX",&vm_detX);
-    m_tree->Branch("detY",&vm_detY);
-    m_tree->Branch("detZ",&vm_detZ);
-    m_tree->Branch("pdg",&vm_pdg);
-    m_tree->Branch("px",&vm_px);
-    m_tree->Branch("py",&vm_py);
-    m_tree->Branch("pz",&vm_pz);
-    m_tree->Branch("p",&vm_p);
-    m_tree->Branch("status",&vm_status);
-    m_tree->Branch("beampx",&beam_px);
-    m_tree->Branch("beampy",&beam_py);
-    m_tree->Branch("beampz",&beam_pz);
-    m_tree->Branch("beamp",&beam_p);
-    m_tree->Branch("beam_pdg",&beam_pdg);
-    m_tree->Branch("genPpx",&m_genPpx);
-    m_tree->Branch("genPpy",&m_genPpy);
-    m_tree->Branch("genPpz",&m_genPpz);
-    m_tree->Branch("genPp",&m_genPp);
-    m_tree->Branch("genBeamP",&m_genBeamP);
-    m_tree->Branch("genBeamPx",&m_genBeamPx);
-    m_tree->Branch("genBeamPy",&m_genBeamPy);
-    m_tree->Branch("genBeamPz",&m_genBeamPz);
-
-    m_tree->Branch("genBeamPP",&m_genBeamPP);
+    m_tree->Branch("eventNumber", &m_eventNumber);
+    m_tree->Branch("xR",        &vm_xR);
+    m_tree->Branch("yR",        &vm_yR);
+    m_tree->Branch("zR",        &vm_zR);
+    m_tree->Branch("xT",        &vm_xT);
+    m_tree->Branch("yT",        &vm_yT);
+    m_tree->Branch("zT",        &vm_zT);
+    m_tree->Branch("plane",     &vm_plane);
+    m_tree->Branch("module",    &vm_module);
+    m_tree->Branch("sensor",    &vm_sensor);
+    m_tree->Branch("pixX",      &vm_pixX);
+    m_tree->Branch("pixY",      &vm_pixY);
+    m_tree->Branch("pixZ",      &vm_pixZ);
+    m_tree->Branch("cellID",    &vm_cellID);
+    m_tree->Branch("detX",      &vm_detX);
+    m_tree->Branch("detY",      &vm_detY);
+    m_tree->Branch("detZ",      &vm_detZ);
+    m_tree->Branch("eDep",      &vm_eDep);
+    m_tree->Branch("time",      &vm_time);
+    m_tree->Branch("path",      &vm_path);
+    m_tree->Branch("pdg",       &vm_pdg);
+    m_tree->Branch("mcIndex",   &vm_mcIndex);
+    m_tree->Branch("mcCollectionID", &vm_mcCollectionID);
+    m_tree->Branch("px",        &vm_px);
+    m_tree->Branch("py",        &vm_py);
+    m_tree->Branch("pz",        &vm_pz);
+    m_tree->Branch("p",         &vm_p);
+    m_tree->Branch("status",    &vm_status);
+    m_tree->Branch("xP",        &vm_xP);
+    m_tree->Branch("yP",        &vm_yP);
+    m_tree->Branch("zP",        &vm_zP);
+    m_tree->Branch("pathP",     &vm_pathP);
+    m_tree->Branch("timeP",     &vm_timeP);
+    m_tree->Branch("planeP",    &vm_planeP);
+    m_tree->Branch("moduleP",   &vm_moduleP);
+    m_tree->Branch("sensorP",   &vm_sensorP);
+    m_tree->Branch("pdgP",      &vm_pdgP);
+    m_tree->Branch("statusP",   &vm_statusP);
+    m_tree->Branch("mcIndexP",  &vm_mcIndexP);
+    m_tree->Branch("mcCollectionIDP", &vm_mcCollectionIDP);
+    m_tree->Branch("pxP",       &vm_pxP);
+    m_tree->Branch("pyP",       &vm_pyP);
+    m_tree->Branch("pzP",       &vm_pzP);
+    m_tree->Branch("pP",        &vm_pP);
+    m_tree->Branch("beampx",    &beam_px);
+    m_tree->Branch("beampy",    &beam_py);
+    m_tree->Branch("beampz",    &beam_pz);
+    m_tree->Branch("beamp",     &beam_p);
+    m_tree->Branch("beam_pdg",  &beam_pdg);
+    m_tree->Branch("genPpx",    &m_genPpx);
+    m_tree->Branch("genPpy",    &m_genPpy);
+    m_tree->Branch("genPpz",    &m_genPpz);
+    m_tree->Branch("genPp",     &m_genPp);
+    m_tree->Branch("genBeamP",  &m_genBeamP);
+    m_tree->Branch("genBeamPx", &m_genBeamPx);
+    m_tree->Branch("genBeamPy", &m_genBeamPy);
+    m_tree->Branch("genBeamPz", &m_genBeamPz);
+    m_tree->Branch("genBeamPP", &m_genBeamPP);
     m_tree->Branch("genBeamPPx",&m_genBeamPPx);
     m_tree->Branch("genBeamPPy",&m_genBeamPPy);
     m_tree->Branch("genBeamPPz",&m_genBeamPPz);
-
-
     m_tree->Branch("trk_p",     &trk_p);
-m_tree->Branch("trk_theta", &trk_theta);
-m_tree->Branch("trk_phi",   &trk_phi);
-m_tree->Branch("trk_px", &trk_px);
-m_tree->Branch("trk_py", &trk_py);
-m_tree->Branch("trk_pz", &trk_pz);
+    m_tree->Branch("trk_theta", &trk_theta);
+    m_tree->Branch("trk_phi",   &trk_phi);
+    m_tree->Branch("trk_px",    &trk_px);
+    m_tree->Branch("trk_py",    &trk_py);
+    m_tree->Branch("trk_pz",    &trk_pz);
+    m_tree->Branch("trk_qOverP",&trk_qOverP);
+    m_tree->Branch("trk_charge",&trk_charge);
+    m_tree->Branch("trk_index", &trk_index);
+    m_tree->Branch("trk_type",  &trk_type);
+    m_tree->Branch("trk_surface", &trk_surface);
+    m_tree->Branch("trk_time",  &trk_time);
+    m_tree->Branch("trk_pdg",   &trk_pdg);
 
-    // Geometry and segmentation
-    m_geoSvc = GetApplication()->GetService<DD4hep_service>();
-    auto ro = m_geoSvc->detector()->readout("B0TrackerHits");
+    // Entry/exit summary branches (one row per mc-particle/disk/side).
+    m_tree->Branch("xEntry",     &vm_xEntry);
+    m_tree->Branch("yEntry",     &vm_yEntry);
+    m_tree->Branch("zEntry",     &vm_zEntry);
+    m_tree->Branch("timeEntry",  &vm_timeEntry);
+    m_tree->Branch("pxEntry",    &vm_pxEntry);
+    m_tree->Branch("pyEntry",    &vm_pyEntry);
+    m_tree->Branch("pzEntry",    &vm_pzEntry);
+    m_tree->Branch("pEntry",     &vm_pEntry);
+    m_tree->Branch("xExit",      &vm_xExit);
+    m_tree->Branch("yExit",      &vm_yExit);
+    m_tree->Branch("zExit",      &vm_zExit);
+    m_tree->Branch("timeExit",   &vm_timeExit);
+    m_tree->Branch("pxExit",     &vm_pxExit);
+    m_tree->Branch("pyExit",     &vm_pyExit);
+    m_tree->Branch("pzExit",     &vm_pzExit);
+    m_tree->Branch("pExit",      &vm_pExit);
+    m_tree->Branch("planeEE",    &vm_planeEE);
+    m_tree->Branch("sideEE",     &vm_sideEE);          // 0=back, 1=front
+    m_tree->Branch("pdgEE",      &vm_pdgEE);
+    m_tree->Branch("mcIndexEE",  &vm_mcIndexEE);
+    m_tree->Branch("mcCollectionIDEE", &vm_mcCollectionIDEE);
+    m_tree->Branch("nStepsEE",   &vm_nStepsEE);
+    m_tree->Branch("statusEE",   &vm_statusEE);   // 1=primary final-state, 0=secondary, 4=beam
 
-    m_seg = ro.segmentation().segmentation();
-    
+    // B0TrackerHits readout fields vary by geometry version; decode optional pixel fields safely.
+    m_geoSvc = app->GetService<DD4hep_service>();
+    auto ro  = m_geoSvc->detector()->readout("B0TrackerHits");
     m_decoder = ro.idSpec().decoder();
+    m_volman  = m_geoSvc->detector()->volumeManager();
 
-    auto& detector = dd4hep::Detector::getInstance();
-    const dd4hep::VolumeManager& volman = detector.volumeManager();
-    m_volman = dd4hep::Detector::getInstance().volumeManager();
-
-
-}
-void B0Trackers::MCgenAnalysis(const std::vector<const edm4hep::MCParticle*>& mcparts){
-	m_VertexTrue.pdg.clear();
-	m_VertexTrue.status.clear();
-	m_VertexTrue.E.clear();
-	m_VertexTrue.theta.clear();
-	m_VertexTrue.phi.clear();
-	m_VertexTrue.vx.clear();
-	m_VertexTrue.vy.clear();
-	m_VertexTrue.vz.clear();
-	m_VertexTrue.px.clear();
-	m_VertexTrue.py.clear();
-	m_VertexTrue.pz.clear();
-	m_VertexTrue.p.clear();
-
-	for(auto particle : mcparts){
-		edm4hep::Vector3d p = particle->getMomentum();
-		edm4hep::Vector3d v = particle->getVertex();
-
-		if((particle->getPDG() == 22 ||
-		   particle->getPDG() == 11 ||
-		   particle->getPDG() == -11 ||
-            particle->getPDG() == 2212) &&
-		   (particle->getGeneratorStatus() == 1 ||  particle->getGeneratorStatus() == 4)){
-
-			m_VertexTrue.pdg.push_back(particle->getPDG());
-			m_VertexTrue.status.push_back(particle->getGeneratorStatus());
-			m_VertexTrue.E.push_back(particle->getEnergy());
-			double theta = atan2( sqrt(pow(p.x,2) + pow(p.y,2)), p.z );
-			m_VertexTrue.theta.push_back(theta);
-			m_VertexTrue.phi.push_back(atan2( p.y, p.x ));
-			m_VertexTrue.vx.push_back(v.x);
-			m_VertexTrue.vy.push_back(v.y);
-			m_VertexTrue.vz.push_back(v.z);
-			m_VertexTrue.px.push_back(p.x);
-			m_VertexTrue.py.push_back(p.y);
-			m_VertexTrue.pz.push_back(p.z);
-			m_VertexTrue.p.push_back(sqrt(pow(p.x,2) + pow(p.y,2) + pow(p.z,2)));
-		}
-	}
-
-}
-
-
-
-//void B0Trackers::ProcessSequential(const std::shared_ptr<const JEvent>& event) {
-void B0Trackers::Process(const std::shared_ptr<const JEvent>& event){
-   
-
-
-// to see the available factories ====
-/*
-    for (auto* fac : event->GetAllFactories()) {
-        std::cout << "Factory: object=\"" << fac->GetObjectName()
-                  << "\" tag=\"" << fac->GetTag() << "\""
-                  << std::endl;
+    // Build (layer, module) -> side map by walking the B0Tracker DetElement tree.
+    // Each module is placed in the layer Assembly at z = +ModuleOffsetFromSupport
+    // (front) or -offset (back); the placement's translation z carries the sign.
+    // Key uses the cellID's physVolID values (not the DetElement id, which has
+    // different semantics in dev vs official geometries).
+    auto b0Det = m_geoSvc->detector()->detector("B0Tracker");
+    if (b0Det.isValid()) {
+        const auto findVolID = [](const dd4hep::PlacedVolume& pv, const std::string& name) -> int {
+            for (const auto& id : pv.volIDs()) {
+                if (id.first == name) return id.second;
+            }
+            return -1;
+        };
+        for (const auto& [layerName, layerDE] : b0Det.children()) {
+            const auto layer_pv = layerDE.placement();
+            if (!layer_pv.isValid()) continue;
+            const int layer_id = findVolID(layer_pv, "layer");
+            if (layer_id < 0) continue;
+            for (const auto& [modName, modDE] : layerDE.children()) {
+                const auto pv = modDE.placement();
+                if (!pv.isValid()) continue;
+                const int module_id = findVolID(pv, "module");
+                if (module_id < 0) continue;
+                const TGeoMatrix& mat = pv.matrix();
+                const double* tr = mat.GetTranslation();
+                m_moduleToSide[{layer_id, module_id}] = (tr[2] > 0.0) ? 1 : 0;
+            }
+        }
     }
-*/
 
-auto mcparticles = event->Get<edm4hep::MCParticle>("MCParticles");
-auto tracker_hits    = event->Get<edm4hep::SimTrackerHit>("B0TrackerHits");
-//auto tracks  = event->Get<edm4eic::TrackParameters>("B0TrackerCKFTrackParameters");
-auto tracks  = event->Get<edm4eic::TrackParameters>("B0TrackerCKFTruthSeededTrackParameters");
-auto seeds = event->Get<edm4eic::TrackSeed>("B0TrackerTruthSeeds");
+    rootLock->release_lock();
+}
 
+void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
+    // Fetch before locking: event->Get() may run expensive factories (CKF),
+    // and JANA already serializes that work internally.
+    auto mcparticles = event->Get<edm4hep::MCParticle>("MCParticles");
+    auto simHits     = event->Get<edm4hep::SimTrackerHit>("B0TrackerHits");
+    auto tracks      = event->Get<edm4eic::TrackParameters>("B0TrackerCKFTruthSeededTrackParameters");
 
+    std::lock_guard<std::mutex> lock(m_fillMutex);
 
-    std::array<std::vector<const edm4hep::SimTrackerHit*>,4> hitBuckets;
-    m_HitsClas.clear();
-    beam_px.clear();
-    beam_py.clear();
-    beam_pz.clear();
-    beam_p.clear();
+    m_eventNumber = event->GetEventNumber();
+
+    vm_xR.clear();    vm_yR.clear();    vm_zR.clear();
+    vm_xT.clear();    vm_yT.clear();    vm_zT.clear();
+    vm_detX.clear();  vm_detY.clear();  vm_detZ.clear();
+    vm_plane.clear(); vm_module.clear(); vm_sensor.clear();
+    vm_pixX.clear();  vm_pixY.clear();   vm_pixZ.clear();
+    vm_cellID.clear(); vm_mcIndex.clear(); vm_mcCollectionID.clear();
+    vm_eDep.clear();  vm_time.clear();   vm_path.clear();
+    vm_pdg.clear();   vm_status.clear();
+    vm_px.clear();    vm_py.clear();    vm_pz.clear();   vm_p.clear();
+
+    vm_xP.clear();      vm_yP.clear();      vm_zP.clear();      vm_pathP.clear();   vm_timeP.clear();
+    vm_planeP.clear();  vm_moduleP.clear(); vm_sensorP.clear();
+
+    vm_xEntry.clear();   vm_yEntry.clear();  vm_zEntry.clear();  vm_timeEntry.clear();
+    vm_pxEntry.clear();  vm_pyEntry.clear(); vm_pzEntry.clear(); vm_pEntry.clear();
+    vm_xExit.clear();    vm_yExit.clear();   vm_zExit.clear();   vm_timeExit.clear();
+    vm_pxExit.clear();   vm_pyExit.clear();  vm_pzExit.clear();  vm_pExit.clear();
+    vm_planeEE.clear();  vm_sideEE.clear();  vm_pdgEE.clear();
+    vm_mcIndexEE.clear(); vm_mcCollectionIDEE.clear(); vm_nStepsEE.clear();
+    vm_statusEE.clear();
+    vm_pdgP.clear();    vm_statusP.clear(); vm_mcIndexP.clear(); vm_mcCollectionIDP.clear();
+    vm_pxP.clear();     vm_pyP.clear();     vm_pzP.clear();     vm_pP.clear();
+
+    trk_p.clear();    trk_px.clear();   trk_py.clear();  trk_pz.clear();
+    trk_theta.clear();trk_phi.clear();
+    trk_qOverP.clear(); trk_time.clear();
+    trk_index.clear(); trk_charge.clear(); trk_type.clear(); trk_pdg.clear(); trk_surface.clear();
+
+    beam_px.clear();  beam_py.clear();  beam_pz.clear(); beam_p.clear();
     beam_pdg.clear();
+    m_genPpx.clear();    m_genPpy.clear();    m_genPpz.clear();    m_genPp.clear();
+    m_genBeamPx.clear(); m_genBeamPy.clear(); m_genBeamPz.clear(); m_genBeamP.clear();
+    m_genBeamPPx.clear();m_genBeamPPy.clear();m_genBeamPPz.clear();m_genBeamPP.clear();
 
-    vm_xR.clear();
-    vm_yR.clear();
-    vm_zR.clear();
-    vm_xT.clear();
-    vm_yT.clear();
-    vm_zT.clear();
-    vm_plane.clear();
-    vm_module.clear();
-    vm_sensor.clear();
-    vm_detX.clear();
-    vm_detY.clear();
-    vm_detZ.clear();
-    vm_pdg.clear();
-    vm_px.clear();
-    vm_py.clear();
-    vm_pz.clear();
-    vm_p.clear();
-    vm_status.clear(); 
+    // Key: (mcCollectionID, mcIndex, layer, module, sensor) — one *P entry per
+    // (particle, sensitive-volume) pair. `module` is globally unique so front-
+    // vs-back placements on the same disk land in distinct buckets.
+    std::map<std::tuple<uint32_t, int, int, int, int>, std::size_t> penetrationIndex;
 
-
-    m_genPpx.clear();
-    m_genPpy.clear();
-    m_genPpz.clear();
-    m_genPp.clear();
-
-m_genBeamP.clear();
-m_genBeamPx.clear();
-m_genBeamPy.clear();
-m_genBeamPz.clear();
-
-
-m_genBeamPP.clear();
-m_genBeamPPx.clear();
-m_genBeamPPy.clear();
-m_genBeamPPz.clear();
-
-
-    trk_p.clear();
-    trk_px.clear();
-    trk_py.clear();
-    trk_pz.clear();
-trk_theta.clear();
-trk_phi.clear();
-
-    //
-    // ----- clear vectors -----
-    //
-    m_xi.clear();
-    m_yi.clear();
-    m_zi.clear();
-    m_pxi.clear();
-    m_pyi.clear();
-    m_pzi.clear();
-    m_pathL.clear();
-    //-------------
- 
-    auto app = GetApplication();
-    m_geoSvc = app->template GetService<DD4hep_service>();
-    
-    
-//    const auto& simHits = *event->GetCollection<edm4hep::SimTrackerHit>("B0TrackerHits");
-    auto simHits = event->Get<edm4hep::SimTrackerHit>("B0TrackerHits");
-
-
-    std::cout<<" ============ "<<std::endl;
-    int tempCount = 0;
-//    for (const auto& h : simHits) {
-    for (const auto *h:simHits){
-
-    	HitClass tempHit;
-        auto  mc = h->getParticle();
-        if (!mc.isAvailable()) {
-            // SimTrackerHit has no associated MCParticle; skip to avoid
-            // contaminating the TTree with pdg=0, p=0 rows.
-            continue;
+    // Key: (mcCollectionID, mcIndex, layer, side) — one entry/exit row per
+    // (particle, disk side). Tracks the smallest- and largest-time SimTrackerHits
+    // contributing to that group so we can report where the particle entered
+    // and exited the silicon on each side of each disk.
+    std::map<std::tuple<uint32_t, int, int, int>, std::size_t> entryExitIndex;
+    const auto getFieldOr = [this](std::uint64_t cellID, const char* field, int fallback) -> int {
+        try {
+            return static_cast<int>(m_decoder->get(cellID, field));
+        } catch (...) {
+            return fallback;
         }
-        int genStat = mc.getGeneratorStatus();
-        m_primary = genStat;
-        auto  mom = mc.getMomentum();
-        m_Truepx = mom.x;
-        m_Truepy = mom.y;
-        m_Truepz = mom.z;
+    };
 
-        m_Truep = std::sqrt(mom.x*mom.x + mom.y*mom.y + mom.z*mom.z);
-        m_TruePDG = mc.getPDG();
+    for (const auto* h : simHits) {
+        const auto mc = h->getParticle();
+        // Accessing an unavailable podio relation is UB; skip instead.
+        if (!mc.isAvailable()) continue;
 
-        uint64_t cid = h->getCellID();
+        const auto mom = mc.getMomentum();
+        const double pmag = std::sqrt(mom.x*mom.x + mom.y*mom.y + mom.z*mom.z);
 
-        // readout centre ------------------------------
-        auto cpos = m_seg->position(cid);
-        //auto local = m_seg->position(cid);
+        const uint64_t cid = h->getCellID();
+        const auto gpos = m_geoSvc->converter()->position(cid);              // cm, global
+        const auto lpos = m_volman.lookupDetElement(cid).nominal()
+                              .worldToLocal(dd4hep::Position(gpos.x(), gpos.y(), gpos.z())); // cm, local
+        const auto truthPos = h->getPosition();
+        const int plane  = m_decoder->get(cid, "layer");
+        const int module = m_decoder->get(cid, "module");
+        const int sensor = m_decoder->get(cid, "sensor");
+        const int pixX   = getFieldOr(cid, "x", -1);
+        const int pixY   = getFieldOr(cid, "y", -1);
+        const int pixZ   = getFieldOr(cid, "z", -1);
+        const double path = h->getPathLength();
+        const auto id = mc.id();
 
-        const auto gpos = m_geoSvc->converter()->position(cid); // cm
+        vm_xR.push_back(10. * gpos.x());     // cm -> mm
+        vm_yR.push_back(10. * gpos.y());
+        vm_zR.push_back(10. * gpos.z());
+        vm_xT.push_back(truthPos.x);          // mm (EDM4hep convention)
+        vm_yT.push_back(truthPos.y);
+        vm_zT.push_back(truthPos.z);
+        vm_detX.push_back(10. * lpos.x());   // cm -> mm
+        vm_detY.push_back(10. * lpos.y());
+        vm_detZ.push_back(10. * lpos.z());
+        vm_plane .push_back(plane);
+        vm_module.push_back(module);
+        vm_sensor.push_back(sensor);
+        vm_pixX  .push_back(pixX);
+        vm_pixY  .push_back(pixY);
+        vm_pixZ  .push_back(pixZ);
+        vm_cellID.push_back(cid);
+        vm_eDep  .push_back(h->getEDep());
+        vm_time  .push_back(h->getTime());
+        vm_path  .push_back(path);
+        vm_pdg   .push_back(mc.getPDG());
+        vm_mcIndex.push_back(id.index);
+        vm_mcCollectionID.push_back(id.collectionID);
+        vm_px    .push_back(mom.x);
+        vm_py    .push_back(mom.y);
+        vm_pz    .push_back(mom.z);
+        vm_p     .push_back(pmag);
+        vm_status.push_back(mc.getGeneratorStatus());
 
-    	const auto volman 	= m_geoSvc->detector()->volumeManager();
-    	const auto alignment = volman.lookupDetElement(cid).nominal();
-    	const auto lpos 	= alignment.worldToLocal( dd4hep::Position( gpos.x(), gpos.y(), gpos.z() ) ); // cm
+        const auto key = std::make_tuple(id.collectionID, id.index, plane, module, sensor);
+        const auto existing = penetrationIndex.find(key);
+        if (existing == penetrationIndex.end()) {
+            const std::size_t idx = vm_xP.size();
+            penetrationIndex.emplace(key, idx);
+            vm_xP     .push_back(truthPos.x);
+            vm_yP     .push_back(truthPos.y);
+            vm_zP     .push_back(truthPos.z);
+            vm_pathP  .push_back(path);
+            vm_timeP  .push_back(h->getTime());
+            vm_planeP .push_back(plane);
+            vm_moduleP.push_back(module);
+            vm_sensorP.push_back(sensor);
+            vm_pdgP   .push_back(mc.getPDG());
+            vm_statusP.push_back(mc.getGeneratorStatus());
+            vm_mcIndexP.push_back(id.index);
+            vm_mcCollectionIDP.push_back(id.collectionID);
+            vm_pxP    .push_back(mom.x);
+            vm_pyP    .push_back(mom.y);
+            vm_pzP    .push_back(mom.z);
+            vm_pP     .push_back(pmag);
+        } else if (h->getTime() < vm_timeP[existing->second]) {
+            // Earlier step into the same sensor — overwrite position/momentum with entry values.
+            const std::size_t idx = existing->second;
+            vm_xP[idx]    = truthPos.x;
+            vm_yP[idx]    = truthPos.y;
+            vm_zP[idx]    = truthPos.z;
+            vm_pathP[idx] = path;
+            vm_timeP[idx] = h->getTime();
+            vm_pxP[idx]   = mom.x;
+            vm_pyP[idx]   = mom.y;
+            vm_pzP[idx]   = mom.z;
+            vm_pP[idx]    = pmag;
+        }
 
-
-
-/*
-	static int debug_hit_prints = 0;
-	if (debug_hit_prints < 1000) { // only print for first 10 hits total
-    		auto de = volman.lookupDetElement(cid);
-    		std::cout << "[DBG] cid=" << cid
-              	<< " system=" << m_decoder->get(cid, "system")
-              	<< " layer="  << m_decoder->get(cid, "layer")
-              //	<< " plane="  << m_decoder->get(cid, "plane")
-              	<< " module=" << m_decoder->get(cid, "module")
-              	<< " sensor=" << m_decoder->get(cid, "sensor")
-              	<< "  DetElement path='" << de.path() << "'"
-              	<< " volume='" << de.volume().name() << "'"
-              	<< std::endl;
-    		++debug_hit_prints;
-	}
-
-*/
-
-
-        m_xR = 10.*gpos.x();
-        m_yR = 10.*gpos.y();
-        m_zR = 10.*gpos.z();
-
-        m_eDep = h->getEDep();
-        m_time = h->getTime();
-        m_HitPath = h->getPathLength();
-
-	std::cout<<tempCount++<<" "<<genStat<<" p = "<<m_Truep<<" PDG = "<<m_TruePDG<<std::endl;
-        // truth hit position --------------------------
-        m_xT = h->getPosition().x;   // same as h.x()
-        m_yT = h->getPosition().y;   // etc.
-        m_zT = h->getPosition().z;
-
-        // bit-fields (readout is CartesianGridXZ: system,layer,module,sensor,x,z)
-        m_plane  = m_decoder->get(cid,"layer");
-        m_module = m_decoder->get(cid,"module");
-        m_sensor = m_decoder->get(cid,"sensor");
-        m_pixX   = m_decoder->get(cid,"x");
-        m_pixZ   = m_decoder->get(cid,"z");
-
-
-	vm_xR.push_back(m_xR);
-	vm_yR.push_back(m_yR);
-	vm_zR.push_back(m_zR);
-        vm_xT.push_back(m_xT);
-        vm_yT.push_back(m_yT);
-        vm_zT.push_back(m_zT);
-	vm_plane.push_back(m_plane);
-	vm_module.push_back(m_module);
-	vm_sensor.push_back(m_sensor);
-	vm_detX.push_back(lpos.x());
-	vm_detY.push_back(lpos.y());
-	vm_detZ.push_back(lpos.z());
-	vm_pdg.push_back(mc.getPDG());
-	vm_px.push_back(m_Truepx);
-        vm_py.push_back(m_Truepy);
-        vm_pz.push_back(m_Truepz);
-        vm_p.push_back(m_Truep);
-	vm_status.push_back(m_primary);
-	
-	
-        tempHit.xR = m_xR;
-        tempHit.yR = m_yR;
-        tempHit.zR = m_zR;
-        tempHit.xT = m_xT;
-        tempHit.yT = m_yT;
-        tempHit.zT = m_zT;
-        //tempHit.plane = m_plane;
-        tempHit.mod = m_module;
-        tempHit.prime = m_primary;
-        tempHit.eDep = m_eDep;
-        tempHit.time = m_time;
-        tempHit.pathL = m_HitPath;
-        tempHit.cellID = cid;
-        tempHit.px = m_Truepx;
-        tempHit.py = m_Truepy;
-        tempHit.pz = m_Truepz;
-        tempHit.p = m_Truep;
-        tempHit.theta = atan2( sqrt(pow(m_Truepx,2) + pow(m_Truepy,2)), m_Truepz );
-        tempHit.phi = atan2( m_Truepy, m_Truepx );
-        tempHit.xDet = lpos.x();
-        tempHit.yDet = lpos.y();
-        tempHit.zDet = lpos.z();
-
-
-
-	m_detX = lpos.x();
-	m_detY = lpos.y();
-	m_detZ = lpos.z();
-
-        m_HitsClas.push_back(tempHit);
-
-	//BuildTracks(m_HitsClas);
-        // ... fill your TTree or do residual = (xT-xR) etc.
-        // --- write one row ---
-	//
-	
-	
-        /*MCgenAnalysis();
-
-	for(int ii=0;ii<m_VertexTrue.status.size();ii++){
-		if(m_VertexTrue.status.at(ii) == 4){
-		}
-		std::cout<<ii<<" stat = "<<m_VertexTrue.status.at(ii)<<std::endl;
-		
-	}
-
-        m_tree->Fill();*/
-
-	
-
-
+        // Entry/exit upsert: one row per (particle, disk, side).
+        // Skip hits from modules we couldn't classify (shouldn't happen for
+        // B0TrackerHits since Init walked the full tree, but be defensive).
+        const auto sideIt = m_moduleToSide.find({plane, module});
+        if (sideIt != m_moduleToSide.end()) {
+            const int side = sideIt->second;
+            const auto eeKey = std::make_tuple(id.collectionID, id.index, plane, side);
+            const double thisTime = h->getTime();
+            const auto eeIt = entryExitIndex.find(eeKey);
+            if (eeIt == entryExitIndex.end()) {
+                const std::size_t idx = vm_xEntry.size();
+                entryExitIndex.emplace(eeKey, idx);
+                vm_xEntry .push_back(truthPos.x);   vm_yEntry .push_back(truthPos.y);
+                vm_zEntry .push_back(truthPos.z);   vm_timeEntry.push_back(thisTime);
+                vm_pxEntry.push_back(mom.x);        vm_pyEntry.push_back(mom.y);
+                vm_pzEntry.push_back(mom.z);        vm_pEntry .push_back(pmag);
+                vm_xExit  .push_back(truthPos.x);   vm_yExit  .push_back(truthPos.y);
+                vm_zExit  .push_back(truthPos.z);   vm_timeExit.push_back(thisTime);
+                vm_pxExit .push_back(mom.x);        vm_pyExit .push_back(mom.y);
+                vm_pzExit .push_back(mom.z);        vm_pExit  .push_back(pmag);
+                vm_planeEE.push_back(plane);        vm_sideEE.push_back(side);
+                vm_pdgEE  .push_back(mc.getPDG());
+                vm_mcIndexEE.push_back(id.index);
+                vm_mcCollectionIDEE.push_back(id.collectionID);
+                vm_nStepsEE.push_back(1);
+                vm_statusEE.push_back(mc.getGeneratorStatus());
+            } else {
+                const std::size_t idx = eeIt->second;
+                ++vm_nStepsEE[idx];
+                if (thisTime < vm_timeEntry[idx]) {
+                    vm_xEntry[idx]    = truthPos.x;
+                    vm_yEntry[idx]    = truthPos.y;
+                    vm_zEntry[idx]    = truthPos.z;
+                    vm_timeEntry[idx] = thisTime;
+                    vm_pxEntry[idx]   = mom.x;
+                    vm_pyEntry[idx]   = mom.y;
+                    vm_pzEntry[idx]   = mom.z;
+                    vm_pEntry[idx]    = pmag;
+                }
+                if (thisTime > vm_timeExit[idx]) {
+                    vm_xExit[idx]    = truthPos.x;
+                    vm_yExit[idx]    = truthPos.y;
+                    vm_zExit[idx]    = truthPos.z;
+                    vm_timeExit[idx] = thisTime;
+                    vm_pxExit[idx]   = mom.x;
+                    vm_pyExit[idx]   = mom.y;
+                    vm_pzExit[idx]   = mom.z;
+                    vm_pExit[idx]    = pmag;
+                }
+            }
+        }
     }
 
-        MCgenAnalysis(mcparticles);
+    int trackIndex = 0;
+    for (const auto* tp : tracks) {
+        const float theta  = tp->getTheta();
+        const float phi    = tp->getPhi();
+        const float qOverP = tp->getQOverP();
+        const double p = (qOverP != 0.f) ? std::abs(1.0 / qOverP) : 0.0;
+        const int charge = (qOverP > 0.f) ? 1 : ((qOverP < 0.f) ? -1 : 0);
 
+        trk_p    .push_back(p);
+        trk_theta.push_back(theta);
+        trk_phi  .push_back(phi);
+        trk_px   .push_back(p * std::sin(theta) * std::cos(phi));
+        trk_py   .push_back(p * std::sin(theta) * std::sin(phi));
+        trk_pz   .push_back(p * std::cos(theta));
+        trk_qOverP.push_back(qOverP);
+        trk_charge.push_back(charge);
+        trk_index .push_back(trackIndex++);
+        trk_type  .push_back(tp->getType());
+        trk_surface.push_back(tp->getSurface());
+        trk_time  .push_back(tp->getTime());
+        trk_pdg   .push_back(tp->getPdg());
+    }
 
-        for(int ii=0;ii<m_VertexTrue.status.size();ii++){
-                if(m_VertexTrue.status.at(ii) == 4){
-			beam_px.push_back(m_VertexTrue.px.at(ii));
-			beam_py.push_back(m_VertexTrue.py.at(ii));
-			beam_pz.push_back(m_VertexTrue.pz.at(ii));
-			beam_p.push_back(m_VertexTrue.p.at(ii));
-			beam_pdg.push_back(m_VertexTrue.pdg.at(ii));
-                }
+    // Generator-status convention (HepMC/Pythia8): 1 = stable final-state, 4 = beam.
+    for (const auto* part : mcparticles) {
+        const auto p = part->getMomentum();
+        const int  pdg    = part->getPDG();
+        const int  status = part->getGeneratorStatus();
+        const double pmag = std::sqrt(p.x*p.x + p.y*p.y + p.z*p.z);
 
+        if (status == 4 &&
+            (pdg == 22 || pdg == 11 || pdg == -11 || pdg == 2212)) {
+            beam_px .push_back(p.x);
+            beam_py .push_back(p.y);
+            beam_pz .push_back(p.z);
+            beam_p  .push_back(pmag);
+            beam_pdg.push_back(pdg);
         }
+        if (pdg == 2212 && status == 4) {
+            m_genPpx.push_back(p.x);
+            m_genPpy.push_back(p.y);
+            m_genPpz.push_back(p.z);
+            m_genPp .push_back(pmag);
+        }
+        if (pdg == 2212 && status == 1) {
+            m_genBeamPPx.push_back(p.x);
+            m_genBeamPPy.push_back(p.y);
+            m_genBeamPPz.push_back(p.z);
+            m_genBeamPP .push_back(pmag);
+        }
+        if (pdg == 11 && status == 1) {
+            m_genBeamPx.push_back(p.x);
+            m_genBeamPy.push_back(p.y);
+            m_genBeamPz.push_back(p.z);
+            m_genBeamP .push_back(pmag);
+        }
+    }
 
-
-// Access ACTS track parameters (one set per fitted track)
-for (const auto *tp : tracks){//B0CKFTrackParams()) {
-
-	cout<<" !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! "<<endl<<endl<<endl<<endl;
-//    if (!tp) continue;  // just in case
-
-
-    cout<<" =================\t\t\t\t\t\t\t\t\t\t>>>>>>>>>>>>>>>>>>>>>> +_+_++_+_+_++_+__ "<<endl;
-    // Extract angles and q/p
-//    auto mom = tp->getMomentum();
-//    cout<<" track momentum  = "<<std::sqrt(mom.x*mom.x + mom.y*mom.y + mom.z*mom.z)<<endl;
-    float theta  = tp->getTheta();
-    float phi    = tp->getPhi();
-    float qOverP = tp->getQOverP();
-
-    cout<< "momentum  = "<<std::abs(1.0 / qOverP)<<endl;
-    // reconstruct |p| in GeV (ignore sign)
-    double p = (qOverP != 0.f) ? std::abs(1.0 / qOverP) : 0.0;
-
-    trk_p.push_back(p);
-    trk_theta.push_back(theta);
-    trk_phi.push_back(phi);
-
-    // If you later want components:
-    double px = p * std::sin(theta) * std::cos(phi);
-    double py = p * std::sin(theta) * std::sin(phi);
-    double pz = p * std::cos(theta);
-
-    trk_px.push_back(px);
-    trk_py.push_back(py);
-    trk_pz.push_back(pz);
+    m_tree->Fill();
 }
 
-
-// generate generated:
-
-	for(auto particle : mcparticles){
-		edm4hep::Vector3d p = particle->getMomentum();
-		edm4hep::Vector3d v = particle->getVertex();
-
-		if(particle->getPDG() == 2212 && particle->getGeneratorStatus() == 4){
-
-			m_genPpx.push_back(p.x);
-			m_genPpy.push_back(p.y);
-			m_genPpz.push_back(p.z);
-			m_genPp.push_back(sqrt(pow(p.x,2)+pow(p.y,2)+pow(p.z,2)));
-		}
-		if(particle->getPDG() == 2212 && particle->getGeneratorStatus() == 1){
-			m_genBeamPPx.push_back(p.x);
-                        m_genBeamPPy.push_back(p.y);
-                        m_genBeamPPz.push_back(p.z);
-			m_genBeamPP.push_back(sqrt(pow(p.x,2)+pow(p.y,2)+pow(p.z,2)));
-		}
-		if(particle->getPDG() == 11 && particle->getGeneratorStatus() == 1){
-			m_genBeamPx.push_back(p.x);
-                        m_genBeamPy.push_back(p.y);
-                        m_genBeamPz.push_back(p.z);
-                        m_genBeamP.push_back(sqrt(pow(p.x,2)+pow(p.y,2)+pow(p.z,2)));
-		}
-	}	
-
-
-        m_tree->Fill();
-
-    
-}
-//-------------------------------------------
-// FinishWithGlobalRootLock
-//-------------------------------------------
-//void B0Trackers::FinishWithGlobalRootLock() {
-void B0Trackers::Finish(){
-
+void B0Trackers::Finish() {
+    // TTree is owned by the output TFile; RootFile_service writes/closes it.
 }

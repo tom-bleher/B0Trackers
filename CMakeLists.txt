@@ -10,7 +10,6 @@ set(CMAKE_CXX_STANDARD ${EICrecon_CXX_STANDARD})
 set(B0Trackers_PLUGIN_SOURCES
     B0Trackers.cc
     B0Trackers.h
-    variables.h
 )
 
 # Build the shared plugin

@@ -1,168 +1,91 @@
-#include <algorithm>
-#include <bitset>
-#include <spdlog/spdlog.h>
-#include <cstdlib>
-#include <iostream>
+#pragma once
 
-//#include <JANA/JEventProcessorSequentialRoot.h>
+#include <memory>
+#include <mutex>
+#include <cstdint>
+#include <map>
+#include <utility>
+#include <vector>
+
 #include <JANA/JEventProcessor.h>
-#include <TH2D.h>
-#include <TProfile.h>
-#include <TFile.h>
-#include <TTree.h>
-#include <TLorentzVector.h>
-#include <THashList.h>
 
-#include <edm4hep/MCParticle.h>
-#include <edm4hep/SimTrackerHit.h>
-#include <edm4hep/SimTrackerHitCollection.h>
-#include <edm4hep/SimCalorimeterHit.h>
-#include <edm4hep/RawCalorimeterHit.h>
-
-#include <edm4eic/Cluster.h>
-//#include <edm4eic/RawCalorimeterHit.h>
-#include <edm4eic/ProtoCluster.h>
+#include <DD4hep/VolumeManager.h>
+#include <DDSegmentation/BitFieldCoder.h>
 
 #include <services/geometry/dd4hep/DD4hep_service.h>
 
-#include "variables.h"
-#include <edm4eic/TrackParameters.h>
-#include <edm4eic/TrackSeedCollection.h>
-#include <edm4eic/TrackParametersCollection.h>
-#include <edm4eic/Trajectory.h>
+class TTree;
 
-using namespace std;
-
-//class B0Trackers : public JEventProcessorSequentialRoot {
-   
 class B0Trackers : public JEventProcessor {
-
-private:
-    // Data objects we will need from JANA e.g.
-/*    PrefetchT<edm4hep::MCParticle> MCParticles          = {this, "MCParticles"};
-
-    
-    PrefetchT<edm4hep::SimTrackerHit> Tracker_hits      = {this, "B0TrackerHits"};
-
-
-// NEW: ACTS output (names match tracking plugin defaults)
-//PrefetchT<edm4eic::TrackParameters> TrackParameters = {this, "TrackParameters"};
-//PrefetchT<edm4eic::Trajectory> CentralCKFTrajectories = {this, "CentralCKFTrajectories"};
- PrefetchT<edm4eic::TrackParameters> B0CKFTrackParams = {this, "B0TrackerCKFTrackParameters"};
-*/
-/*
-auto MCParticles = event->Get<edm4hep::MCParticle>("MCParticles");
-auto Tracker_hits    = event->Get<edm4hep::SimTrackerHit>("B0TrackerHits");
-auto B0CKFTrackParams  = event->Get<edm4eic::TrackParameters>("B0TrackerCKFTrackParameters");
-*/
-
-    // Geometry decoder & segmentation
-    const dd4hep::DDSegmentation::BitFieldCoder* m_decoder = nullptr;
-
-    const dd4hep::DDSegmentation::Segmentation* m_seg = nullptr;
-
-
-    std::shared_ptr<DD4hep_service> m_geoSvc = nullptr;
-    dd4hep::VolumeManager m_volman;
-
-
-
-    std::vector<double> trk_p;
-    std::vector<double> trk_px;
-    std::vector<double> trk_py;
-    std::vector<double> trk_pz;
-std::vector<double> trk_theta;
-std::vector<double> trk_phi;
-
 public:
-//    B0Trackers()             { SetTypeName(NAME_OF_THIS); }
-
-//    void InitWithGlobalRootLock() override;
-//    void ProcessSequential(const std::shared_ptr<const JEvent>& event) override;
-    
-//    void FinishWithGlobalRootLock() override;
-
     void Init() override;
     void Process(const std::shared_ptr<const JEvent>& event) override;
     void Finish() override;
 
+private:
+    // Serializes the entire Process() body across JANA worker threads:
+    // protects both TTree::Fill() and the per-event member vectors below.
+    std::mutex m_fillMutex;
 
+    // Cached geometry handles (set once in Init).
+    std::shared_ptr<DD4hep_service> m_geoSvc;
+    const dd4hep::DDSegmentation::BitFieldCoder*  m_decoder = nullptr;
+    dd4hep::VolumeManager                         m_volman;
 
+    // (layer, module-volID) -> side: 1=front (placed at +ModuleOffsetFromSupport
+    // in layer frame), 0=back (placed at -offset). Built once in Init by walking
+    // the B0Tracker DetElement tree. The key uses the physVolIDs that the cellID
+    // decoder reports so it works across dev / official B0 geometries (their
+    // DetElement::id() conventions differ).
+    std::map<std::pair<int, int>, int> m_moduleToSide;
 
-    void MCgenAnalysis(const std::vector<const edm4hep::MCParticle*>& mcparts);
-  
-    
-    // ---- ROOT objects ----
+    // ROOT output (owned by the file via TDirectory::cd() in Init).
     TTree* m_tree = nullptr;
 
-    double m_xR, m_yR, m_zR;
-    double m_xT, m_yT, m_zT;
-    double m_detX, m_detY, m_detZ;
-    double m_eDep;
-    double m_time;
-    double m_HitPath;
+    // Event identifier for this TTree entry.
+    std::uint64_t m_eventNumber = 0;
 
-    double m_Truepx;
-    double m_Truepy;
-    double m_Truepz;
-    double m_Truep;
-    int m_TruePDG;
-    
-    int m_plane, m_pixX, m_pixZ;
-    int m_module, m_sensor;
-    int m_primary;
+    // Per-event hit vectors.
+    std::vector<double> vm_xR, vm_yR, vm_zR;        // readout cell-center, mm, global
+    std::vector<double> vm_xT, vm_yT, vm_zT;        // truth step position, mm, global
+    std::vector<double> vm_detX, vm_detY, vm_detZ;  // local sensor frame, mm
+    std::vector<int>    vm_plane, vm_module, vm_sensor, vm_pixX, vm_pixY, vm_pixZ;
+    std::vector<int>    vm_pdg, vm_status;
+    std::vector<double> vm_px, vm_py, vm_pz, vm_p;
+    std::vector<std::uint64_t> vm_cellID;
+    std::vector<int>    vm_mcIndex;
+    std::vector<std::uint32_t> vm_mcCollectionID;
+    std::vector<double> vm_eDep, vm_time, vm_path;
 
-	vector<TrackClass> m_TrackerHits;
-	vector<HitClass> m_HitsClas;
-	VertexDataTrue m_VertexTrue;
+    // One crossing per MC particle per sensitive volume (layer, module, sensor).
+    // Each *P entry is the first-entry Geant4 step (smallest time) into that sensor.
+    std::vector<double> vm_xP, vm_yP, vm_zP, vm_pathP, vm_timeP; // mm, mm, mm, step path length, ns
+    std::vector<int>    vm_planeP, vm_moduleP, vm_sensorP;
+    std::vector<int>    vm_pdgP, vm_statusP, vm_mcIndexP;
+    std::vector<std::uint32_t> vm_mcCollectionIDP;
+    std::vector<double> vm_pxP, vm_pyP, vm_pzP, vm_pP;
 
+    // Entry/exit summary: one row per (mc particle, disk, side). Side ∈ {0=back,
+    // 1=front}. Entry = smallest-time hit in this group; exit = largest-time.
+    // nStepsEE counts how many SimTrackerHits contributed (entry==exit if 1).
+    std::vector<double> vm_xEntry, vm_yEntry, vm_zEntry, vm_timeEntry;
+    std::vector<double> vm_pxEntry, vm_pyEntry, vm_pzEntry, vm_pEntry;
+    std::vector<double> vm_xExit,  vm_yExit,  vm_zExit,  vm_timeExit;
+    std::vector<double> vm_pxExit, vm_pyExit, vm_pzExit, vm_pExit;
+    std::vector<int>    vm_planeEE, vm_sideEE, vm_pdgEE, vm_mcIndexEE, vm_nStepsEE;
+    std::vector<int>    vm_statusEE;   // linked MCParticle::generatorStatus
+    std::vector<std::uint32_t> vm_mcCollectionIDEE;
 
-	vector<double>	  m_xi;
-	vector<double>    m_yi;
-	vector<double>    m_zi;
-	vector<double>    m_pxi;
-	vector<double>    m_pyi;
-	vector<double>    m_pzi;
-	vector<double>    m_pathL;
-	
-	std::vector<double> vm_xR;
-	std::vector<double> vm_yR;
-	std::vector<double> vm_zR;
-	std::vector<double> vm_xT;
-	std::vector<double> vm_yT;
-	std::vector<double> vm_zT;
-	std::vector<int> vm_plane;
-	std::vector<int> vm_module;
-	std::vector<int> vm_sensor;
-	std::vector<double> vm_detX;
-	std::vector<double> vm_detY;
-	std::vector<double> vm_detZ;
-	std::vector<int> vm_pdg;
-	std::vector<double> vm_px;
-	std::vector<double> vm_py;
-	std::vector<double> vm_pz;
-	std::vector<double> vm_p;
-	std::vector<int> vm_status;
-	std::vector<double> m_genPpx;
-	std::vector<double> m_genPpy;
-	std::vector<double> m_genPpz;
-	std::vector<double> m_genPp;
+    // Per-event ACTS track vectors (B0 CKF, truth-seeded).
+    std::vector<double> trk_p, trk_px, trk_py, trk_pz, trk_theta, trk_phi;
+    std::vector<double> trk_qOverP, trk_time;
+    std::vector<int>    trk_index, trk_charge, trk_type, trk_pdg;
+    std::vector<std::uint64_t> trk_surface;
 
-	std::vector<double> m_genBeamP;
-        std::vector<double> m_genBeamPx;
-        std::vector<double> m_genBeamPy;
-        std::vector<double> m_genBeamPz;
-
-        std::vector<double> m_genBeamPP;
-        std::vector<double> m_genBeamPPx;
-        std::vector<double> m_genBeamPPy;
-        std::vector<double> m_genBeamPPz;
-
-	std::vector<double> beam_px;
-	std::vector<double> beam_py;
-	std::vector<double> beam_pz;
-	std::vector<double> beam_p;
-	std::vector<int> beam_pdg;
-
-
+    // Per-event MC truth.
+    std::vector<double> beam_px, beam_py, beam_pz, beam_p;
+    std::vector<int>    beam_pdg;
+    std::vector<double> m_genPpx, m_genPpy, m_genPpz, m_genPp;          // beam proton (status 4)
+    std::vector<double> m_genBeamPx, m_genBeamPy, m_genBeamPz, m_genBeamP;     // scattered electron (status 1)
+    std::vector<double> m_genBeamPPx, m_genBeamPPy, m_genBeamPPz, m_genBeamPP; // scattered proton (status 1)
 };
