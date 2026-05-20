@@ -49,6 +49,7 @@ void B0Trackers::Init() {
     m_tree->Branch("zT",        &vm_zT);
     m_tree->Branch("plane",     &vm_plane);
     m_tree->Branch("module",    &vm_module);
+    m_tree->Branch("side",      &vm_side);           // -1=unknown, 0=back, 1=front
     m_tree->Branch("sensor",    &vm_sensor);
     m_tree->Branch("pixX",      &vm_pixX);
     m_tree->Branch("pixY",      &vm_pixY);
@@ -75,6 +76,7 @@ void B0Trackers::Init() {
     m_tree->Branch("timeP",     &vm_timeP);
     m_tree->Branch("planeP",    &vm_planeP);
     m_tree->Branch("moduleP",   &vm_moduleP);
+    m_tree->Branch("sideP",     &vm_sideP);          // -1=unknown, 0=back, 1=front
     m_tree->Branch("sensorP",   &vm_sensorP);
     m_tree->Branch("pdgP",      &vm_pdgP);
     m_tree->Branch("statusP",   &vm_statusP);
@@ -115,7 +117,7 @@ void B0Trackers::Init() {
     m_tree->Branch("trk_time",  &trk_time);
     m_tree->Branch("trk_pdg",   &trk_pdg);
 
-    // Entry/exit summary branches (one row per mc-particle/disk/side).
+    // Entry/exit summary branches (one row per mc-particle/disk/side/module).
     m_tree->Branch("xEntry",     &vm_xEntry);
     m_tree->Branch("yEntry",     &vm_yEntry);
     m_tree->Branch("zEntry",     &vm_zEntry);
@@ -132,7 +134,12 @@ void B0Trackers::Init() {
     m_tree->Branch("pyExit",     &vm_pyExit);
     m_tree->Branch("pzExit",     &vm_pzExit);
     m_tree->Branch("pExit",      &vm_pExit);
+    m_tree->Branch("sensorEntry", &vm_sensorEntry);
+    m_tree->Branch("sensorExit",  &vm_sensorExit);
+    m_tree->Branch("cellIDEntry", &vm_cellIDEntry);
+    m_tree->Branch("cellIDExit",  &vm_cellIDExit);
     m_tree->Branch("planeEE",    &vm_planeEE);
+    m_tree->Branch("moduleEE",   &vm_moduleEE);
     m_tree->Branch("sideEE",     &vm_sideEE);          // 0=back, 1=front
     m_tree->Branch("pdgEE",      &vm_pdgEE);
     m_tree->Branch("mcIndexEE",  &vm_mcIndexEE);
@@ -193,7 +200,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     vm_xR.clear();    vm_yR.clear();    vm_zR.clear();
     vm_xT.clear();    vm_yT.clear();    vm_zT.clear();
     vm_detX.clear();  vm_detY.clear();  vm_detZ.clear();
-    vm_plane.clear(); vm_module.clear(); vm_sensor.clear();
+    vm_plane.clear(); vm_module.clear(); vm_side.clear();   vm_sensor.clear();
     vm_pixX.clear();  vm_pixY.clear();   vm_pixZ.clear();
     vm_cellID.clear(); vm_mcIndex.clear(); vm_mcCollectionID.clear();
     vm_eDep.clear();  vm_time.clear();   vm_path.clear();
@@ -201,13 +208,15 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     vm_px.clear();    vm_py.clear();    vm_pz.clear();   vm_p.clear();
 
     vm_xP.clear();      vm_yP.clear();      vm_zP.clear();      vm_pathP.clear();   vm_timeP.clear();
-    vm_planeP.clear();  vm_moduleP.clear(); vm_sensorP.clear();
+    vm_planeP.clear();  vm_moduleP.clear(); vm_sideP.clear(); vm_sensorP.clear();
 
     vm_xEntry.clear();   vm_yEntry.clear();  vm_zEntry.clear();  vm_timeEntry.clear();
     vm_pxEntry.clear();  vm_pyEntry.clear(); vm_pzEntry.clear(); vm_pEntry.clear();
     vm_xExit.clear();    vm_yExit.clear();   vm_zExit.clear();   vm_timeExit.clear();
     vm_pxExit.clear();   vm_pyExit.clear();  vm_pzExit.clear();  vm_pExit.clear();
-    vm_planeEE.clear();  vm_sideEE.clear();  vm_pdgEE.clear();
+    vm_sensorEntry.clear(); vm_sensorExit.clear();
+    vm_cellIDEntry.clear(); vm_cellIDExit.clear();
+    vm_planeEE.clear();  vm_moduleEE.clear(); vm_sideEE.clear();  vm_pdgEE.clear();
     vm_mcIndexEE.clear(); vm_mcCollectionIDEE.clear(); vm_nStepsEE.clear();
     vm_statusEE.clear();
     vm_pdgP.clear();    vm_statusP.clear(); vm_mcIndexP.clear(); vm_mcCollectionIDP.clear();
@@ -224,16 +233,15 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     m_genBeamPx.clear(); m_genBeamPy.clear(); m_genBeamPz.clear(); m_genBeamP.clear();
     m_genBeamPPx.clear();m_genBeamPPy.clear();m_genBeamPPz.clear();m_genBeamPP.clear();
 
-    // Key: (mcCollectionID, mcIndex, layer, module, sensor) — one *P entry per
-    // (particle, sensitive-volume) pair. `module` is globally unique so front-
-    // vs-back placements on the same disk land in distinct buckets.
-    std::map<std::tuple<uint32_t, int, int, int, int>, std::size_t> penetrationIndex;
+    // Key: (mcCollectionID, mcIndex, layer, side, module, sensor) — one *P entry
+    // per (particle, sensitive-volume) pair.
+    std::map<std::tuple<uint32_t, int, int, int, int, int>, std::size_t> penetrationIndex;
 
-    // Key: (mcCollectionID, mcIndex, layer, side) — one entry/exit row per
-    // (particle, disk side). Tracks the smallest- and largest-time SimTrackerHits
-    // contributing to that group so we can report where the particle entered
-    // and exited the silicon on each side of each disk.
-    std::map<std::tuple<uint32_t, int, int, int>, std::size_t> entryExitIndex;
+    // Key: (mcCollectionID, mcIndex, layer, side, module) — one entry/exit row per
+    // (particle, disk side, module). Tracks the smallest- and largest-time
+    // SimTrackerHits contributing to that group so we can report where the particle
+    // entered and exited the silicon in each module.
+    std::map<std::tuple<uint32_t, int, int, int, int>, std::size_t> entryExitIndex;
     const auto getFieldOr = [this](std::uint64_t cellID, const char* field, int fallback) -> int {
         try {
             return static_cast<int>(m_decoder->get(cellID, field));
@@ -247,7 +255,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         // Accessing an unavailable podio relation is UB; skip instead.
         if (!mc.isAvailable()) continue;
 
-        const auto mom = mc.getMomentum();
+        const auto mom = h->getMomentum();
         const double pmag = std::sqrt(mom.x*mom.x + mom.y*mom.y + mom.z*mom.z);
 
         const uint64_t cid = h->getCellID();
@@ -264,6 +272,8 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         const int plane  = m_decoder->get(cid, "layer");
         const int module = m_decoder->get(cid, "module");
         const int sensor = m_decoder->get(cid, "sensor");
+        const auto sideIt = m_moduleToSide.find({plane, module});
+        const int side = (sideIt != m_moduleToSide.end()) ? sideIt->second : -1;
         const int pixX   = getFieldOr(cid, "x", -1);
         const int pixY   = getFieldOr(cid, "y", -1);
         const int pixZ   = getFieldOr(cid, "z", -1);
@@ -281,6 +291,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         vm_detZ.push_back(10. * lpos.z());
         vm_plane .push_back(plane);
         vm_module.push_back(module);
+        vm_side  .push_back(side);
         vm_sensor.push_back(sensor);
         vm_pixX  .push_back(pixX);
         vm_pixY  .push_back(pixY);
@@ -298,7 +309,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         vm_p     .push_back(pmag);
         vm_status.push_back(mc.getGeneratorStatus());
 
-        const auto key = std::make_tuple(id.collectionID, id.index, plane, module, sensor);
+        const auto key = std::make_tuple(id.collectionID, id.index, plane, side, module, sensor);
         const auto existing = penetrationIndex.find(key);
         if (existing == penetrationIndex.end()) {
             const std::size_t idx = vm_xP.size();
@@ -310,6 +321,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             vm_timeP  .push_back(h->getTime());
             vm_planeP .push_back(plane);
             vm_moduleP.push_back(module);
+            vm_sideP  .push_back(side);
             vm_sensorP.push_back(sensor);
             vm_pdgP   .push_back(mc.getPDG());
             vm_statusP.push_back(mc.getGeneratorStatus());
@@ -333,13 +345,11 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             vm_pP[idx]    = pmag;
         }
 
-        // Entry/exit upsert: one row per (particle, disk, side).
+        // Entry/exit upsert: one row per (particle, disk, side, module).
         // Skip hits from modules we couldn't classify (shouldn't happen for
         // B0TrackerHits since Init walked the full tree, but be defensive).
-        const auto sideIt = m_moduleToSide.find({plane, module});
-        if (sideIt != m_moduleToSide.end()) {
-            const int side = sideIt->second;
-            const auto eeKey = std::make_tuple(id.collectionID, id.index, plane, side);
+        if (side >= 0) {
+            const auto eeKey = std::make_tuple(id.collectionID, id.index, plane, side, module);
             const double thisTime = h->getTime();
             const auto eeIt = entryExitIndex.find(eeKey);
             if (eeIt == entryExitIndex.end()) {
@@ -353,7 +363,10 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 vm_zExit  .push_back(truthPos.z);   vm_timeExit.push_back(thisTime);
                 vm_pxExit .push_back(mom.x);        vm_pyExit .push_back(mom.y);
                 vm_pzExit .push_back(mom.z);        vm_pExit  .push_back(pmag);
-                vm_planeEE.push_back(plane);        vm_sideEE.push_back(side);
+                vm_sensorEntry.push_back(sensor);   vm_sensorExit.push_back(sensor);
+                vm_cellIDEntry.push_back(cid);      vm_cellIDExit.push_back(cid);
+                vm_planeEE.push_back(plane);        vm_moduleEE.push_back(module);
+                vm_sideEE.push_back(side);
                 vm_pdgEE  .push_back(mc.getPDG());
                 vm_mcIndexEE.push_back(id.index);
                 vm_mcCollectionIDEE.push_back(id.collectionID);
@@ -371,6 +384,8 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                     vm_pyEntry[idx]   = mom.y;
                     vm_pzEntry[idx]   = mom.z;
                     vm_pEntry[idx]    = pmag;
+                    vm_sensorEntry[idx] = sensor;
+                    vm_cellIDEntry[idx] = cid;
                 }
                 if (thisTime > vm_timeExit[idx]) {
                     vm_xExit[idx]    = truthPos.x;
@@ -381,6 +396,8 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                     vm_pyExit[idx]   = mom.y;
                     vm_pzExit[idx]   = mom.z;
                     vm_pExit[idx]    = pmag;
+                    vm_sensorExit[idx] = sensor;
+                    vm_cellIDExit[idx] = cid;
                 }
             }
         }

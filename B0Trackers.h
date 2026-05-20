@@ -49,7 +49,7 @@ private:
     std::vector<double> vm_xR, vm_yR, vm_zR;        // readout cell-center, mm, global
     std::vector<double> vm_xT, vm_yT, vm_zT;        // truth step position, mm, global
     std::vector<double> vm_detX, vm_detY, vm_detZ;  // local sensor frame, mm
-    std::vector<int>    vm_plane, vm_module, vm_sensor, vm_pixX, vm_pixY, vm_pixZ;
+    std::vector<int>    vm_plane, vm_module, vm_side, vm_sensor, vm_pixX, vm_pixY, vm_pixZ;
     std::vector<int>    vm_pdg, vm_status;
     std::vector<double> vm_px, vm_py, vm_pz, vm_p;
     std::vector<std::uint64_t> vm_cellID;
@@ -57,22 +57,24 @@ private:
     std::vector<std::uint32_t> vm_mcCollectionID;
     std::vector<double> vm_eDep, vm_time, vm_path;
 
-    // One crossing per MC particle per sensitive volume (layer, module, sensor).
+    // One crossing per MC particle per sensitive volume (layer, side, module, sensor).
     // Each *P entry is the first-entry Geant4 step (smallest time) into that sensor.
     std::vector<double> vm_xP, vm_yP, vm_zP, vm_pathP, vm_timeP; // mm, mm, mm, step path length, ns
-    std::vector<int>    vm_planeP, vm_moduleP, vm_sensorP;
+    std::vector<int>    vm_planeP, vm_moduleP, vm_sideP, vm_sensorP;
     std::vector<int>    vm_pdgP, vm_statusP, vm_mcIndexP;
     std::vector<std::uint32_t> vm_mcCollectionIDP;
     std::vector<double> vm_pxP, vm_pyP, vm_pzP, vm_pP;
 
-    // Entry/exit summary: one row per (mc particle, disk, side). Side ∈ {0=back,
-    // 1=front}. Entry = smallest-time hit in this group; exit = largest-time.
+    // Entry/exit summary: one row per (mc particle, disk, side, module). Side is
+    // {0=back, 1=front}. Entry = smallest-time hit in this group; exit = largest-time.
     // nStepsEE counts how many SimTrackerHits contributed (entry==exit if 1).
     std::vector<double> vm_xEntry, vm_yEntry, vm_zEntry, vm_timeEntry;
     std::vector<double> vm_pxEntry, vm_pyEntry, vm_pzEntry, vm_pEntry;
     std::vector<double> vm_xExit,  vm_yExit,  vm_zExit,  vm_timeExit;
     std::vector<double> vm_pxExit, vm_pyExit, vm_pzExit, vm_pExit;
-    std::vector<int>    vm_planeEE, vm_sideEE, vm_pdgEE, vm_mcIndexEE, vm_nStepsEE;
+    std::vector<int>    vm_sensorEntry, vm_sensorExit;
+    std::vector<std::uint64_t> vm_cellIDEntry, vm_cellIDExit;
+    std::vector<int>    vm_planeEE, vm_moduleEE, vm_sideEE, vm_pdgEE, vm_mcIndexEE, vm_nStepsEE;
     std::vector<int>    vm_statusEE;   // linked MCParticle::generatorStatus
     std::vector<std::uint32_t> vm_mcCollectionIDEE;
 
