@@ -31,6 +31,11 @@ extern "C" {
 void B0Trackers::Init() {
     auto* app = GetApplication();
 
+    app->SetDefaultParameter("B0Trackers:primary_pdg", m_primaryPdg,
+                             "PDG code used to tag the selected primary particle");
+    app->SetDefaultParameter("B0Trackers:primary_status", m_primaryStatus,
+                             "Generator status used to tag the selected primary particle");
+
     auto rootLock = app->GetService<JGlobalRootLock>();
     rootLock->acquire_write_lock();
 
@@ -69,6 +74,7 @@ void B0Trackers::Init() {
     m_tree->Branch("pz",        &vm_pz);
     m_tree->Branch("p",         &vm_p);
     m_tree->Branch("status",    &vm_status);
+    m_tree->Branch("isPrimary", &vm_isPrimary);
     m_tree->Branch("xP",        &vm_xP);
     m_tree->Branch("yP",        &vm_yP);
     m_tree->Branch("zP",        &vm_zP);
@@ -80,6 +86,7 @@ void B0Trackers::Init() {
     m_tree->Branch("sensorP",   &vm_sensorP);
     m_tree->Branch("pdgP",      &vm_pdgP);
     m_tree->Branch("statusP",   &vm_statusP);
+    m_tree->Branch("isPrimaryP", &vm_isPrimaryP);
     m_tree->Branch("mcIndexP",  &vm_mcIndexP);
     m_tree->Branch("mcCollectionIDP", &vm_mcCollectionIDP);
     m_tree->Branch("pxP",       &vm_pxP);
@@ -91,6 +98,14 @@ void B0Trackers::Init() {
     m_tree->Branch("beampz",    &beam_pz);
     m_tree->Branch("beamp",     &beam_p);
     m_tree->Branch("beam_pdg",  &beam_pdg);
+    m_tree->Branch("primary_pdg", &m_primaryPdgOut);
+    m_tree->Branch("primary_status", &m_primaryStatusOut);
+    m_tree->Branch("primary_mcIndex", &m_primaryMcIndex);
+    m_tree->Branch("primary_mcCollectionID", &m_primaryMcCollectionID);
+    m_tree->Branch("primary_px", &m_primaryPx);
+    m_tree->Branch("primary_py", &m_primaryPy);
+    m_tree->Branch("primary_pz", &m_primaryPz);
+    m_tree->Branch("primary_p",  &m_primaryP);
     m_tree->Branch("genPpx",    &m_genPpx);
     m_tree->Branch("genPpy",    &m_genPpy);
     m_tree->Branch("genPpz",    &m_genPpz);
@@ -145,7 +160,8 @@ void B0Trackers::Init() {
     m_tree->Branch("mcIndexEE",  &vm_mcIndexEE);
     m_tree->Branch("mcCollectionIDEE", &vm_mcCollectionIDEE);
     m_tree->Branch("nStepsEE",   &vm_nStepsEE);
-    m_tree->Branch("statusEE",   &vm_statusEE);   // 1=primary final-state, 0=secondary, 4=beam
+    m_tree->Branch("statusEE",   &vm_statusEE);   // linked MCParticle::generatorStatus
+    m_tree->Branch("isPrimaryEE", &vm_isPrimaryEE);
 
     // B0TrackerHits readout fields vary by geometry version; decode optional pixel fields safely.
     m_geoSvc = app->GetService<DD4hep_service>();
@@ -205,6 +221,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     vm_cellID.clear(); vm_mcIndex.clear(); vm_mcCollectionID.clear();
     vm_eDep.clear();  vm_time.clear();   vm_path.clear();
     vm_pdg.clear();   vm_status.clear();
+    vm_isPrimary.clear();
     vm_px.clear();    vm_py.clear();    vm_pz.clear();   vm_p.clear();
 
     vm_xP.clear();      vm_yP.clear();      vm_zP.clear();      vm_pathP.clear();   vm_timeP.clear();
@@ -217,9 +234,10 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     vm_sensorEntry.clear(); vm_sensorExit.clear();
     vm_cellIDEntry.clear(); vm_cellIDExit.clear();
     vm_planeEE.clear();  vm_moduleEE.clear(); vm_sideEE.clear();  vm_pdgEE.clear();
+    vm_isPrimaryEE.clear();
     vm_mcIndexEE.clear(); vm_mcCollectionIDEE.clear(); vm_nStepsEE.clear();
     vm_statusEE.clear();
-    vm_pdgP.clear();    vm_statusP.clear(); vm_mcIndexP.clear(); vm_mcCollectionIDP.clear();
+    vm_pdgP.clear();    vm_statusP.clear(); vm_isPrimaryP.clear(); vm_mcIndexP.clear(); vm_mcCollectionIDP.clear();
     vm_pxP.clear();     vm_pyP.clear();     vm_pzP.clear();     vm_pP.clear();
 
     trk_p.clear();    trk_px.clear();   trk_py.clear();  trk_pz.clear();
@@ -229,6 +247,9 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
 
     beam_px.clear();  beam_py.clear();  beam_pz.clear(); beam_p.clear();
     beam_pdg.clear();
+    m_primaryPx.clear(); m_primaryPy.clear(); m_primaryPz.clear(); m_primaryP.clear();
+    m_primaryPdgOut.clear(); m_primaryStatusOut.clear(); m_primaryMcIndex.clear();
+    m_primaryMcCollectionID.clear();
     m_genPpx.clear();    m_genPpy.clear();    m_genPpz.clear();    m_genPp.clear();
     m_genBeamPx.clear(); m_genBeamPy.clear(); m_genBeamPz.clear(); m_genBeamP.clear();
     m_genBeamPPx.clear();m_genBeamPPy.clear();m_genBeamPPz.clear();m_genBeamPP.clear();
@@ -248,6 +269,34 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         } catch (...) {
             return fallback;
         }
+    };
+
+    std::vector<std::pair<std::uint32_t, int>> primaryIds;
+    for (const auto* part : mcparticles) {
+        const int pdg = part->getPDG();
+        const int status = part->getGeneratorStatus();
+        if (pdg != m_primaryPdg || status != m_primaryStatus) continue;
+
+        const auto id = part->id();
+        const auto p = part->getMomentum();
+        const double pmag = std::sqrt(p.x*p.x + p.y*p.y + p.z*p.z);
+
+        primaryIds.emplace_back(id.collectionID, id.index);
+        m_primaryPdgOut.push_back(pdg);
+        m_primaryStatusOut.push_back(status);
+        m_primaryMcIndex.push_back(id.index);
+        m_primaryMcCollectionID.push_back(id.collectionID);
+        m_primaryPx.push_back(p.x);
+        m_primaryPy.push_back(p.y);
+        m_primaryPz.push_back(p.z);
+        m_primaryP.push_back(pmag);
+    }
+
+    const auto isSelectedPrimary = [&primaryIds](std::uint32_t collectionID, int index) -> int {
+        for (const auto& selected : primaryIds) {
+            if (selected.first == collectionID && selected.second == index) return 1;
+        }
+        return 0;
     };
 
     for (const auto* h : simHits) {
@@ -279,6 +328,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         const int pixZ   = getFieldOr(cid, "z", -1);
         const double path = h->getPathLength();
         const auto id = mc.id();
+        const int primaryFlag = isSelectedPrimary(id.collectionID, id.index);
 
         vm_xR.push_back(10. * gpos.x());     // cm -> mm
         vm_yR.push_back(10. * gpos.y());
@@ -308,6 +358,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         vm_pz    .push_back(mom.z);
         vm_p     .push_back(pmag);
         vm_status.push_back(mc.getGeneratorStatus());
+        vm_isPrimary.push_back(primaryFlag);
 
         const auto key = std::make_tuple(id.collectionID, id.index, plane, side, module, sensor);
         const auto existing = penetrationIndex.find(key);
@@ -325,6 +376,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             vm_sensorP.push_back(sensor);
             vm_pdgP   .push_back(mc.getPDG());
             vm_statusP.push_back(mc.getGeneratorStatus());
+            vm_isPrimaryP.push_back(primaryFlag);
             vm_mcIndexP.push_back(id.index);
             vm_mcCollectionIDP.push_back(id.collectionID);
             vm_pxP    .push_back(mom.x);
@@ -368,6 +420,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 vm_planeEE.push_back(plane);        vm_moduleEE.push_back(module);
                 vm_sideEE.push_back(side);
                 vm_pdgEE  .push_back(mc.getPDG());
+                vm_isPrimaryEE.push_back(primaryFlag);
                 vm_mcIndexEE.push_back(id.index);
                 vm_mcCollectionIDEE.push_back(id.collectionID);
                 vm_nStepsEE.push_back(1);
