@@ -17,6 +17,7 @@
 #include <edm4hep/SimTrackerHit.h>
 
 #include <edm4eic/TrackParameters.h>
+#include <edm4eic/Trajectory.h>
 
 #include <DD4hep/Objects.h>
 
@@ -142,6 +143,23 @@ void B0Trackers::Init() {
     m_tree->Branch("trk_surface", &trk_surface);
     m_tree->Branch("trk_time",  &trk_time);
     m_tree->Branch("trk_pdg",   &trk_pdg);
+    m_tree->Branch("trk_nStates", &trk_nStates);
+    m_tree->Branch("trk_nMeasurements", &trk_nMeasurements);
+    m_tree->Branch("trk_nOutliers", &trk_nOutliers);
+    m_tree->Branch("trk_nHoles", &trk_nHoles);
+    m_tree->Branch("trk_nSharedHits", &trk_nSharedHits);
+    m_tree->Branch("best_trk_index", &m_bestTrkIndex);
+    m_tree->Branch("best_trk_p", &m_bestTrkP);
+    m_tree->Branch("best_trk_pT", &m_bestTrkPT);
+    m_tree->Branch("best_trk_delta_p", &m_bestTrkDeltaP);
+    m_tree->Branch("best_trk_delta_pT", &m_bestTrkDeltaPT);
+    m_tree->Branch("best_trk_theta", &m_bestTrkTheta);
+    m_tree->Branch("best_trk_phi", &m_bestTrkPhi);
+    m_tree->Branch("best_trk_nStates", &m_bestTrkNStates);
+    m_tree->Branch("best_trk_nMeasurements", &m_bestTrkNMeasurements);
+    m_tree->Branch("best_trk_nOutliers", &m_bestTrkNOutliers);
+    m_tree->Branch("best_trk_nHoles", &m_bestTrkNHoles);
+    m_tree->Branch("best_trk_nSharedHits", &m_bestTrkNSharedHits);
 
     // Entry/exit summary branches (one row per mc-particle/disk/side/module).
     m_tree->Branch("xEntry",     &vm_xEntry);
@@ -221,6 +239,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     auto mcparticles = event->Get<edm4hep::MCParticle>("MCParticles");
     auto simHits     = event->Get<edm4hep::SimTrackerHit>("B0TrackerHits");
     auto tracks      = event->Get<edm4eic::TrackParameters>("B0TrackerCKFTruthSeededTrackParameters");
+    auto trajectories = event->Get<edm4eic::Trajectory>("B0TrackerCKFTruthSeededTrajectories");
 
     std::lock_guard<std::mutex> lock(m_fillMutex);
 
@@ -258,6 +277,21 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     trk_theta.clear();trk_phi.clear();
     trk_qOverP.clear(); trk_time.clear();
     trk_index.clear(); trk_charge.clear(); trk_type.clear(); trk_pdg.clear(); trk_surface.clear();
+    trk_nStates.clear(); trk_nMeasurements.clear(); trk_nOutliers.clear(); trk_nHoles.clear(); trk_nSharedHits.clear();
+
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    m_bestTrkIndex = -1;
+    m_bestTrkNStates = -1;
+    m_bestTrkNMeasurements = -1;
+    m_bestTrkNOutliers = -1;
+    m_bestTrkNHoles = -1;
+    m_bestTrkNSharedHits = -1;
+    m_bestTrkP = nan;
+    m_bestTrkPT = nan;
+    m_bestTrkDeltaP = nan;
+    m_bestTrkDeltaPT = nan;
+    m_bestTrkTheta = nan;
+    m_bestTrkPhi = nan;
 
     beam_px.clear();  beam_py.clear();  beam_pz.clear(); beam_p.clear(); beam_pT.clear();
     beam_pdg.clear();
@@ -481,8 +515,13 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     }
 
     int trackIndex = 0;
-    const double primaryP = m_primaryP.empty() ? std::numeric_limits<double>::quiet_NaN() : m_primaryP.front();
-    const double primaryPT = m_primaryPT.empty() ? std::numeric_limits<double>::quiet_NaN() : m_primaryPT.front();
+    std::size_t primaryRef = 0;
+    for (std::size_t i = 1; i < m_primaryP.size(); ++i) {
+        if (m_primaryP[i] > m_primaryP[primaryRef]) primaryRef = i;
+    }
+    const double primaryP = m_primaryP.empty() ? nan : m_primaryP[primaryRef];
+    const double primaryPT = m_primaryPT.empty() ? nan : m_primaryPT[primaryRef];
+    double bestAbsDeltaP = std::numeric_limits<double>::infinity();
     for (const auto* tp : tracks) {
         const float theta  = tp->getTheta();
         const float phi    = tp->getPhi();
@@ -491,10 +530,21 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         const double pT = std::abs(p * std::sin(theta));
         const int charge = (qOverP > 0.f) ? 1 : ((qOverP < 0.f) ? -1 : 0);
 
+        const double deltaP = p - primaryP;
+        const double deltaPT = pT - primaryPT;
+        const int currentTrackIndex = trackIndex++;
+        const bool hasTrajectory = currentTrackIndex >= 0 &&
+                                   static_cast<std::size_t>(currentTrackIndex) < trajectories.size();
+        const int nStates = hasTrajectory ? static_cast<int>(trajectories[currentTrackIndex]->getNStates()) : -1;
+        const int nMeasurements = hasTrajectory ? static_cast<int>(trajectories[currentTrackIndex]->getNMeasurements()) : -1;
+        const int nOutliers = hasTrajectory ? static_cast<int>(trajectories[currentTrackIndex]->getNOutliers()) : -1;
+        const int nHoles = hasTrajectory ? static_cast<int>(trajectories[currentTrackIndex]->getNHoles()) : -1;
+        const int nSharedHits = hasTrajectory ? static_cast<int>(trajectories[currentTrackIndex]->getNSharedHits()) : -1;
+
         trk_p    .push_back(p);
         trk_pT   .push_back(pT);
-        trk_delta_p .push_back(p - primaryP);
-        trk_delta_pT.push_back(pT - primaryPT);
+        trk_delta_p .push_back(deltaP);
+        trk_delta_pT.push_back(deltaPT);
         trk_theta.push_back(theta);
         trk_phi  .push_back(phi);
         trk_px   .push_back(pT * std::cos(phi));
@@ -502,11 +552,32 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         trk_pz   .push_back(p * std::cos(theta));
         trk_qOverP.push_back(qOverP);
         trk_charge.push_back(charge);
-        trk_index .push_back(trackIndex++);
+        trk_index .push_back(currentTrackIndex);
         trk_type  .push_back(tp->getType());
         trk_surface.push_back(tp->getSurface());
         trk_time  .push_back(tp->getTime());
         trk_pdg   .push_back(tp->getPdg());
+        trk_nStates.push_back(nStates);
+        trk_nMeasurements.push_back(nMeasurements);
+        trk_nOutliers.push_back(nOutliers);
+        trk_nHoles.push_back(nHoles);
+        trk_nSharedHits.push_back(nSharedHits);
+
+        if (std::isfinite(deltaP) && std::abs(deltaP) < bestAbsDeltaP) {
+            bestAbsDeltaP = std::abs(deltaP);
+            m_bestTrkIndex = currentTrackIndex;
+            m_bestTrkP = p;
+            m_bestTrkPT = pT;
+            m_bestTrkDeltaP = deltaP;
+            m_bestTrkDeltaPT = deltaPT;
+            m_bestTrkTheta = theta;
+            m_bestTrkPhi = phi;
+            m_bestTrkNStates = nStates;
+            m_bestTrkNMeasurements = nMeasurements;
+            m_bestTrkNOutliers = nOutliers;
+            m_bestTrkNHoles = nHoles;
+            m_bestTrkNSharedHits = nSharedHits;
+        }
     }
 
     // Generator-status convention (HepMC/Pythia8): 1 = stable final-state, 4 = beam.

@@ -87,7 +87,22 @@ private:
     std::vector<double> trk_p, trk_pT, trk_delta_p, trk_delta_pT, trk_px, trk_py, trk_pz, trk_theta, trk_phi;
     std::vector<double> trk_qOverP, trk_time;
     std::vector<int>    trk_index, trk_charge, trk_type, trk_pdg;
+    std::vector<int>    trk_nStates, trk_nMeasurements, trk_nOutliers, trk_nHoles, trk_nSharedHits;
     std::vector<std::uint64_t> trk_surface;
+
+    // Best reconstructed track matched to the selected primary by |delta p|.
+    int m_bestTrkIndex = -1;
+    int m_bestTrkNStates = -1;
+    int m_bestTrkNMeasurements = -1;
+    int m_bestTrkNOutliers = -1;
+    int m_bestTrkNHoles = -1;
+    int m_bestTrkNSharedHits = -1;
+    double m_bestTrkP = 0.0;
+    double m_bestTrkPT = 0.0;
+    double m_bestTrkDeltaP = 0.0;
+    double m_bestTrkDeltaPT = 0.0;
+    double m_bestTrkTheta = 0.0;
+    double m_bestTrkPhi = 0.0;
 
     // Per-event MC truth.
     std::vector<double> beam_px, beam_py, beam_pz, beam_p, beam_pT;
