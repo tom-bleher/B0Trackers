@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <tuple>
@@ -127,6 +128,8 @@ void B0Trackers::Init() {
     m_tree->Branch("genBeamPPz",&m_genBeamPPz);
     m_tree->Branch("trk_p",     &trk_p);
     m_tree->Branch("trk_pT",    &trk_pT);
+    m_tree->Branch("trk_delta_p", &trk_delta_p);
+    m_tree->Branch("trk_delta_pT", &trk_delta_pT);
     m_tree->Branch("trk_theta", &trk_theta);
     m_tree->Branch("trk_phi",   &trk_phi);
     m_tree->Branch("trk_px",    &trk_px);
@@ -250,7 +253,8 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     vm_pdgP.clear();    vm_statusP.clear(); vm_isPrimaryP.clear(); vm_mcIndexP.clear(); vm_mcCollectionIDP.clear();
     vm_pxP.clear();     vm_pyP.clear();     vm_pzP.clear();     vm_pP.clear();     vm_pTP.clear();
 
-    trk_p.clear();    trk_pT.clear();   trk_px.clear();  trk_py.clear();  trk_pz.clear();
+    trk_p.clear();    trk_pT.clear();   trk_delta_p.clear(); trk_delta_pT.clear();
+    trk_px.clear();   trk_py.clear();   trk_pz.clear();
     trk_theta.clear();trk_phi.clear();
     trk_qOverP.clear(); trk_time.clear();
     trk_index.clear(); trk_charge.clear(); trk_type.clear(); trk_pdg.clear(); trk_surface.clear();
@@ -477,6 +481,8 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     }
 
     int trackIndex = 0;
+    const double primaryP = m_primaryP.empty() ? std::numeric_limits<double>::quiet_NaN() : m_primaryP.front();
+    const double primaryPT = m_primaryPT.empty() ? std::numeric_limits<double>::quiet_NaN() : m_primaryPT.front();
     for (const auto* tp : tracks) {
         const float theta  = tp->getTheta();
         const float phi    = tp->getPhi();
@@ -487,6 +493,8 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
 
         trk_p    .push_back(p);
         trk_pT   .push_back(pT);
+        trk_delta_p .push_back(p - primaryP);
+        trk_delta_pT.push_back(pT - primaryPT);
         trk_theta.push_back(theta);
         trk_phi  .push_back(phi);
         trk_px   .push_back(pT * std::cos(phi));

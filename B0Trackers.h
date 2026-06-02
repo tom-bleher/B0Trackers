@@ -84,7 +84,7 @@ private:
     std::vector<std::uint32_t> vm_mcCollectionIDEE;
 
     // Per-event ACTS track vectors (B0 CKF, truth-seeded).
-    std::vector<double> trk_p, trk_pT, trk_px, trk_py, trk_pz, trk_theta, trk_phi;
+    std::vector<double> trk_p, trk_pT, trk_delta_p, trk_delta_pT, trk_px, trk_py, trk_pz, trk_theta, trk_phi;
     std::vector<double> trk_qOverP, trk_time;
     std::vector<int>    trk_index, trk_charge, trk_type, trk_pdg;
     std::vector<std::uint64_t> trk_surface;
