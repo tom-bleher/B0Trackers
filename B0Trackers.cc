@@ -73,6 +73,7 @@ void B0Trackers::Init() {
     m_tree->Branch("py",        &vm_py);
     m_tree->Branch("pz",        &vm_pz);
     m_tree->Branch("p",         &vm_p);
+    m_tree->Branch("pT",        &vm_pT);
     m_tree->Branch("status",    &vm_status);
     m_tree->Branch("isPrimary", &vm_isPrimary);
     m_tree->Branch("xP",        &vm_xP);
@@ -93,10 +94,12 @@ void B0Trackers::Init() {
     m_tree->Branch("pyP",       &vm_pyP);
     m_tree->Branch("pzP",       &vm_pzP);
     m_tree->Branch("pP",        &vm_pP);
+    m_tree->Branch("pTP",       &vm_pTP);
     m_tree->Branch("beampx",    &beam_px);
     m_tree->Branch("beampy",    &beam_py);
     m_tree->Branch("beampz",    &beam_pz);
     m_tree->Branch("beamp",     &beam_p);
+    m_tree->Branch("beampT",    &beam_pT);
     m_tree->Branch("beam_pdg",  &beam_pdg);
     m_tree->Branch("primary_pdg", &m_primaryPdgOut);
     m_tree->Branch("primary_status", &m_primaryStatusOut);
@@ -106,19 +109,24 @@ void B0Trackers::Init() {
     m_tree->Branch("primary_py", &m_primaryPy);
     m_tree->Branch("primary_pz", &m_primaryPz);
     m_tree->Branch("primary_p",  &m_primaryP);
+    m_tree->Branch("primary_pT", &m_primaryPT);
     m_tree->Branch("genPpx",    &m_genPpx);
     m_tree->Branch("genPpy",    &m_genPpy);
     m_tree->Branch("genPpz",    &m_genPpz);
     m_tree->Branch("genPp",     &m_genPp);
+    m_tree->Branch("genPpT",    &m_genPpT);
     m_tree->Branch("genBeamP",  &m_genBeamP);
+    m_tree->Branch("genBeamPT", &m_genBeamPT);
     m_tree->Branch("genBeamPx", &m_genBeamPx);
     m_tree->Branch("genBeamPy", &m_genBeamPy);
     m_tree->Branch("genBeamPz", &m_genBeamPz);
     m_tree->Branch("genBeamPP", &m_genBeamPP);
+    m_tree->Branch("genBeamPPT",&m_genBeamPPT);
     m_tree->Branch("genBeamPPx",&m_genBeamPPx);
     m_tree->Branch("genBeamPPy",&m_genBeamPPy);
     m_tree->Branch("genBeamPPz",&m_genBeamPPz);
     m_tree->Branch("trk_p",     &trk_p);
+    m_tree->Branch("trk_pT",    &trk_pT);
     m_tree->Branch("trk_theta", &trk_theta);
     m_tree->Branch("trk_phi",   &trk_phi);
     m_tree->Branch("trk_px",    &trk_px);
@@ -141,6 +149,7 @@ void B0Trackers::Init() {
     m_tree->Branch("pyEntry",    &vm_pyEntry);
     m_tree->Branch("pzEntry",    &vm_pzEntry);
     m_tree->Branch("pEntry",     &vm_pEntry);
+    m_tree->Branch("pTEntry",    &vm_pTEntry);
     m_tree->Branch("xExit",      &vm_xExit);
     m_tree->Branch("yExit",      &vm_yExit);
     m_tree->Branch("zExit",      &vm_zExit);
@@ -149,6 +158,7 @@ void B0Trackers::Init() {
     m_tree->Branch("pyExit",     &vm_pyExit);
     m_tree->Branch("pzExit",     &vm_pzExit);
     m_tree->Branch("pExit",      &vm_pExit);
+    m_tree->Branch("pTExit",     &vm_pTExit);
     m_tree->Branch("sensorEntry", &vm_sensorEntry);
     m_tree->Branch("sensorExit",  &vm_sensorExit);
     m_tree->Branch("cellIDEntry", &vm_cellIDEntry);
@@ -222,15 +232,15 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     vm_eDep.clear();  vm_time.clear();   vm_path.clear();
     vm_pdg.clear();   vm_status.clear();
     vm_isPrimary.clear();
-    vm_px.clear();    vm_py.clear();    vm_pz.clear();   vm_p.clear();
+    vm_px.clear();    vm_py.clear();    vm_pz.clear();   vm_p.clear();    vm_pT.clear();
 
     vm_xP.clear();      vm_yP.clear();      vm_zP.clear();      vm_pathP.clear();   vm_timeP.clear();
     vm_planeP.clear();  vm_moduleP.clear(); vm_sideP.clear(); vm_sensorP.clear();
 
     vm_xEntry.clear();   vm_yEntry.clear();  vm_zEntry.clear();  vm_timeEntry.clear();
-    vm_pxEntry.clear();  vm_pyEntry.clear(); vm_pzEntry.clear(); vm_pEntry.clear();
+    vm_pxEntry.clear();  vm_pyEntry.clear(); vm_pzEntry.clear(); vm_pEntry.clear(); vm_pTEntry.clear();
     vm_xExit.clear();    vm_yExit.clear();   vm_zExit.clear();   vm_timeExit.clear();
-    vm_pxExit.clear();   vm_pyExit.clear();  vm_pzExit.clear();  vm_pExit.clear();
+    vm_pxExit.clear();   vm_pyExit.clear();  vm_pzExit.clear();  vm_pExit.clear();  vm_pTExit.clear();
     vm_sensorEntry.clear(); vm_sensorExit.clear();
     vm_cellIDEntry.clear(); vm_cellIDExit.clear();
     vm_planeEE.clear();  vm_moduleEE.clear(); vm_sideEE.clear();  vm_pdgEE.clear();
@@ -238,21 +248,21 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     vm_mcIndexEE.clear(); vm_mcCollectionIDEE.clear(); vm_nStepsEE.clear();
     vm_statusEE.clear();
     vm_pdgP.clear();    vm_statusP.clear(); vm_isPrimaryP.clear(); vm_mcIndexP.clear(); vm_mcCollectionIDP.clear();
-    vm_pxP.clear();     vm_pyP.clear();     vm_pzP.clear();     vm_pP.clear();
+    vm_pxP.clear();     vm_pyP.clear();     vm_pzP.clear();     vm_pP.clear();     vm_pTP.clear();
 
-    trk_p.clear();    trk_px.clear();   trk_py.clear();  trk_pz.clear();
+    trk_p.clear();    trk_pT.clear();   trk_px.clear();  trk_py.clear();  trk_pz.clear();
     trk_theta.clear();trk_phi.clear();
     trk_qOverP.clear(); trk_time.clear();
     trk_index.clear(); trk_charge.clear(); trk_type.clear(); trk_pdg.clear(); trk_surface.clear();
 
-    beam_px.clear();  beam_py.clear();  beam_pz.clear(); beam_p.clear();
+    beam_px.clear();  beam_py.clear();  beam_pz.clear(); beam_p.clear(); beam_pT.clear();
     beam_pdg.clear();
-    m_primaryPx.clear(); m_primaryPy.clear(); m_primaryPz.clear(); m_primaryP.clear();
+    m_primaryPx.clear(); m_primaryPy.clear(); m_primaryPz.clear(); m_primaryP.clear(); m_primaryPT.clear();
     m_primaryPdgOut.clear(); m_primaryStatusOut.clear(); m_primaryMcIndex.clear();
     m_primaryMcCollectionID.clear();
-    m_genPpx.clear();    m_genPpy.clear();    m_genPpz.clear();    m_genPp.clear();
-    m_genBeamPx.clear(); m_genBeamPy.clear(); m_genBeamPz.clear(); m_genBeamP.clear();
-    m_genBeamPPx.clear();m_genBeamPPy.clear();m_genBeamPPz.clear();m_genBeamPP.clear();
+    m_genPpx.clear();    m_genPpy.clear();    m_genPpz.clear();    m_genPp.clear();    m_genPpT.clear();
+    m_genBeamPx.clear(); m_genBeamPy.clear(); m_genBeamPz.clear(); m_genBeamP.clear(); m_genBeamPT.clear();
+    m_genBeamPPx.clear();m_genBeamPPy.clear();m_genBeamPPz.clear();m_genBeamPP.clear();m_genBeamPPT.clear();
 
     // Key: (mcCollectionID, mcIndex, layer, side, module, sensor) — one *P entry
     // per (particle, sensitive-volume) pair.
@@ -280,6 +290,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         const auto id = part->id();
         const auto p = part->getMomentum();
         const double pmag = std::sqrt(p.x*p.x + p.y*p.y + p.z*p.z);
+        const double pT = std::hypot(p.x, p.y);
 
         primaryIds.emplace_back(id.collectionID, id.index);
         m_primaryPdgOut.push_back(pdg);
@@ -290,6 +301,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         m_primaryPy.push_back(p.y);
         m_primaryPz.push_back(p.z);
         m_primaryP.push_back(pmag);
+        m_primaryPT.push_back(pT);
     }
 
     const auto isSelectedPrimary = [&primaryIds](std::uint32_t collectionID, int index) -> int {
@@ -306,6 +318,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
 
         const auto mom = h->getMomentum();
         const double pmag = std::sqrt(mom.x*mom.x + mom.y*mom.y + mom.z*mom.z);
+        const double pT = std::hypot(mom.x, mom.y);
 
         const uint64_t cid = h->getCellID();
         dd4hep::Position gpos;
@@ -357,6 +370,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         vm_py    .push_back(mom.y);
         vm_pz    .push_back(mom.z);
         vm_p     .push_back(pmag);
+        vm_pT    .push_back(pT);
         vm_status.push_back(mc.getGeneratorStatus());
         vm_isPrimary.push_back(primaryFlag);
 
@@ -383,6 +397,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             vm_pyP    .push_back(mom.y);
             vm_pzP    .push_back(mom.z);
             vm_pP     .push_back(pmag);
+            vm_pTP    .push_back(pT);
         } else if (h->getTime() < vm_timeP[existing->second]) {
             // Earlier step into the same sensor — overwrite position/momentum with entry values.
             const std::size_t idx = existing->second;
@@ -395,6 +410,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             vm_pyP[idx]   = mom.y;
             vm_pzP[idx]   = mom.z;
             vm_pP[idx]    = pmag;
+            vm_pTP[idx]   = pT;
         }
 
         // Entry/exit upsert: one row per (particle, disk, side, module).
@@ -411,10 +427,12 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 vm_zEntry .push_back(truthPos.z);   vm_timeEntry.push_back(thisTime);
                 vm_pxEntry.push_back(mom.x);        vm_pyEntry.push_back(mom.y);
                 vm_pzEntry.push_back(mom.z);        vm_pEntry .push_back(pmag);
+                vm_pTEntry.push_back(pT);
                 vm_xExit  .push_back(truthPos.x);   vm_yExit  .push_back(truthPos.y);
                 vm_zExit  .push_back(truthPos.z);   vm_timeExit.push_back(thisTime);
                 vm_pxExit .push_back(mom.x);        vm_pyExit .push_back(mom.y);
                 vm_pzExit .push_back(mom.z);        vm_pExit  .push_back(pmag);
+                vm_pTExit .push_back(pT);
                 vm_sensorEntry.push_back(sensor);   vm_sensorExit.push_back(sensor);
                 vm_cellIDEntry.push_back(cid);      vm_cellIDExit.push_back(cid);
                 vm_planeEE.push_back(plane);        vm_moduleEE.push_back(module);
@@ -437,6 +455,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                     vm_pyEntry[idx]   = mom.y;
                     vm_pzEntry[idx]   = mom.z;
                     vm_pEntry[idx]    = pmag;
+                    vm_pTEntry[idx]   = pT;
                     vm_sensorEntry[idx] = sensor;
                     vm_cellIDEntry[idx] = cid;
                 }
@@ -449,6 +468,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                     vm_pyExit[idx]   = mom.y;
                     vm_pzExit[idx]   = mom.z;
                     vm_pExit[idx]    = pmag;
+                    vm_pTExit[idx]   = pT;
                     vm_sensorExit[idx] = sensor;
                     vm_cellIDExit[idx] = cid;
                 }
@@ -462,13 +482,15 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         const float phi    = tp->getPhi();
         const float qOverP = tp->getQOverP();
         const double p = (qOverP != 0.f) ? std::abs(1.0 / qOverP) : 0.0;
+        const double pT = std::abs(p * std::sin(theta));
         const int charge = (qOverP > 0.f) ? 1 : ((qOverP < 0.f) ? -1 : 0);
 
         trk_p    .push_back(p);
+        trk_pT   .push_back(pT);
         trk_theta.push_back(theta);
         trk_phi  .push_back(phi);
-        trk_px   .push_back(p * std::sin(theta) * std::cos(phi));
-        trk_py   .push_back(p * std::sin(theta) * std::sin(phi));
+        trk_px   .push_back(pT * std::cos(phi));
+        trk_py   .push_back(pT * std::sin(phi));
         trk_pz   .push_back(p * std::cos(theta));
         trk_qOverP.push_back(qOverP);
         trk_charge.push_back(charge);
@@ -485,6 +507,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         const int  pdg    = part->getPDG();
         const int  status = part->getGeneratorStatus();
         const double pmag = std::sqrt(p.x*p.x + p.y*p.y + p.z*p.z);
+        const double pT = std::hypot(p.x, p.y);
 
         if (status == 4 &&
             (pdg == 22 || pdg == 11 || pdg == -11 || pdg == 2212)) {
@@ -492,6 +515,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             beam_py .push_back(p.y);
             beam_pz .push_back(p.z);
             beam_p  .push_back(pmag);
+            beam_pT .push_back(pT);
             beam_pdg.push_back(pdg);
         }
         if (pdg == 2212 && status == 4) {
@@ -499,18 +523,21 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             m_genPpy.push_back(p.y);
             m_genPpz.push_back(p.z);
             m_genPp .push_back(pmag);
+            m_genPpT.push_back(pT);
         }
         if (pdg == 2212 && status == 1) {
             m_genBeamPPx.push_back(p.x);
             m_genBeamPPy.push_back(p.y);
             m_genBeamPPz.push_back(p.z);
             m_genBeamPP .push_back(pmag);
+            m_genBeamPPT.push_back(pT);
         }
         if (pdg == 11 && status == 1) {
             m_genBeamPx.push_back(p.x);
             m_genBeamPy.push_back(p.y);
             m_genBeamPz.push_back(p.z);
             m_genBeamP .push_back(pmag);
+            m_genBeamPT.push_back(pT);
         }
     }
 
