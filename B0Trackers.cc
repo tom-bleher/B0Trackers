@@ -1,17 +1,30 @@
 #include "B0Trackers.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <initializer_list>
 #include <limits>
 #include <map>
 #include <mutex>
+#include <string>
 #include <tuple>
+#include <unordered_map>
 
 #include <JANA/Services/JGlobalRootLock.h>
 
 #include <TFile.h>
 #include <TGeoMatrix.h>
 #include <TTree.h>
+
+#include <Acts/Definitions/Algebra.hpp>
+#include <Acts/Definitions/TrackParametrization.hpp>
+#include <Acts/EventData/TrackContainer.hpp>
+#include <Acts/EventData/TrackStateType.hpp>
+#include <Acts/EventData/VectorMultiTrajectory.hpp>
+#include <Acts/EventData/VectorTrackContainer.hpp>
+#include <Acts/Geometry/GeometryIdentifier.hpp>
+#include <Acts/Surfaces/Surface.hpp>
 
 #include <edm4hep/MCParticle.h>
 #include <edm4hep/SimTrackerHit.h>
@@ -22,6 +35,8 @@
 #include <DD4hep/Objects.h>
 
 #include <services/rootfile/RootFile_service.h>
+#include <algorithms/tracking/ActsGeometryProvider.h>
+#include <services/geometry/acts/ACTSGeo_service.h>
 
 extern "C" {
     void InitPlugin(JApplication* app) {
@@ -54,6 +69,18 @@ void B0Trackers::Init() {
     m_tree->Branch("xT",        &vm_xT);
     m_tree->Branch("yT",        &vm_yT);
     m_tree->Branch("zT",        &vm_zT);
+    m_tree->Branch("aclgad_xPixT", &vm_aclgad_xPixT);
+    m_tree->Branch("aclgad_yPixT", &vm_aclgad_yPixT);
+    m_tree->Branch("aclgad_zPixT", &vm_aclgad_zPixT);
+    m_tree->Branch("aclgad_dxT", &vm_aclgad_dxT);
+    m_tree->Branch("aclgad_dyT", &vm_aclgad_dyT);
+    m_tree->Branch("aclgad_dzT", &vm_aclgad_dzT);
+    m_tree->Branch("aclgad_xPixR", &vm_aclgad_xPixR);
+    m_tree->Branch("aclgad_yPixR", &vm_aclgad_yPixR);
+    m_tree->Branch("aclgad_zPixR", &vm_aclgad_zPixR);
+    m_tree->Branch("aclgad_dxR", &vm_aclgad_dxR);
+    m_tree->Branch("aclgad_dyR", &vm_aclgad_dyR);
+    m_tree->Branch("aclgad_dzR", &vm_aclgad_dzR);
     m_tree->Branch("plane",     &vm_plane);
     m_tree->Branch("module",    &vm_module);
     m_tree->Branch("side",      &vm_side);           // -1=unknown, 0=back, 1=front
@@ -61,6 +88,10 @@ void B0Trackers::Init() {
     m_tree->Branch("pixX",      &vm_pixX);
     m_tree->Branch("pixY",      &vm_pixY);
     m_tree->Branch("pixZ",      &vm_pixZ);
+    m_tree->Branch("aclgad_pixXT", &vm_aclgad_pixXT);
+    m_tree->Branch("aclgad_pixYT", &vm_aclgad_pixYT);
+    m_tree->Branch("aclgad_pixXR", &vm_aclgad_pixXR);
+    m_tree->Branch("aclgad_pixYR", &vm_aclgad_pixYR);
     m_tree->Branch("cellID",    &vm_cellID);
     m_tree->Branch("detX",      &vm_detX);
     m_tree->Branch("detY",      &vm_detY);
@@ -148,6 +179,34 @@ void B0Trackers::Init() {
     m_tree->Branch("trk_nOutliers", &trk_nOutliers);
     m_tree->Branch("trk_nHoles", &trk_nHoles);
     m_tree->Branch("trk_nSharedHits", &trk_nSharedHits);
+    m_tree->Branch("trk_state_track_index", &trk_state_track_index);
+    m_tree->Branch("trk_state_index", &trk_state_index);
+    m_tree->Branch("trk_state_acts_index", &trk_state_acts_index);
+    m_tree->Branch("trk_state_type", &trk_state_type);
+    m_tree->Branch("trk_state_surface", &trk_state_surface);
+    m_tree->Branch("trk_state_loc0", &trk_state_loc0);
+    m_tree->Branch("trk_state_loc1", &trk_state_loc1);
+    m_tree->Branch("trk_x_on_plane", &trk_x_on_plane);
+    m_tree->Branch("trk_y_on_plane", &trk_y_on_plane);
+    m_tree->Branch("trk_z_on_plane", &trk_z_on_plane);
+    m_tree->Branch("trk_aclgad_xPix", &trk_aclgad_xPix);
+    m_tree->Branch("trk_aclgad_yPix", &trk_aclgad_yPix);
+    m_tree->Branch("trk_aclgad_zPix", &trk_aclgad_zPix);
+    m_tree->Branch("trk_aclgad_dx", &trk_aclgad_dx);
+    m_tree->Branch("trk_aclgad_dy", &trk_aclgad_dy);
+    m_tree->Branch("trk_aclgad_dz", &trk_aclgad_dz);
+    m_tree->Branch("trk_aclgad_pixX", &trk_aclgad_pixX);
+    m_tree->Branch("trk_aclgad_pixY", &trk_aclgad_pixY);
+    m_tree->Branch("trk_aclgad_plane", &trk_aclgad_plane);
+    m_tree->Branch("trk_aclgad_module", &trk_aclgad_module);
+    m_tree->Branch("trk_aclgad_side", &trk_aclgad_side);
+    m_tree->Branch("trk_aclgad_sensor", &trk_aclgad_sensor);
+    m_tree->Branch("trk_aclgad_cellID", &trk_aclgad_cellID);
+    m_tree->Branch("trk_state_theta", &trk_state_theta);
+    m_tree->Branch("trk_state_phi", &trk_state_phi);
+    m_tree->Branch("trk_state_qOverP", &trk_state_qOverP);
+    m_tree->Branch("trk_state_time", &trk_state_time);
+    m_tree->Branch("trk_state_pdg", &trk_state_pdg);
     m_tree->Branch("best_trk_index", &m_bestTrkIndex);
     m_tree->Branch("best_trk_p", &m_bestTrkP);
     m_tree->Branch("best_trk_pT", &m_bestTrkPT);
@@ -196,15 +255,38 @@ void B0Trackers::Init() {
 
     // B0TrackerHits readout fields vary by geometry version; decode optional pixel fields safely.
     m_geoSvc = app->GetService<DD4hep_service>();
+    m_actsGeoSvc = app->GetService<ACTSGeo_service>();
+    m_actsGeoProvider = m_actsGeoSvc ? m_actsGeoSvc->actsGeoProvider() : nullptr;
     auto ro  = m_geoSvc->detector()->readout("B0TrackerHits");
+    m_segmentation = ro.segmentation();
     m_decoder = ro.idSpec().decoder();
     m_volman  = m_geoSvc->detector()->volumeManager();
+    // Half-extent in mm from the compact constant: dd4hep constants come back in
+    // native units (cm), so mm = x10 and half = x0.5, i.e. a factor 5. The main
+    // geometry names the constants B0TrackerSensor*, older match_* variants use
+    // the bare Sensor* names.
+    const auto sensorHalfExtentMm = [this](std::initializer_list<const char*> names,
+                                           double fallbackMm) -> double {
+        for (const char* name : names) {
+            try {
+                return 5.0 * m_geoSvc->detector()->constant<double>(name);
+            } catch (const std::exception&) {
+                // Constant not defined in this geometry; try the next name.
+            }
+        }
+        return fallbackMm;
+    };
+    m_sensorHalfX = sensorHalfExtentMm({"B0TrackerSensorWidth", "SensorWidth"}, 8.0);
+    m_sensorHalfY = sensorHalfExtentMm({"B0TrackerSensorLength", "SensorLength"}, 8.0);
 
     // Build (layer, module) -> side map by walking the B0Tracker DetElement tree.
-    // Each module is placed in the layer Assembly at z = +ModuleOffsetFromSupport
-    // (front) or -offset (back); the placement's translation z carries the sign.
-    // Key uses the cellID's physVolID values (not the DetElement id, which has
-    // different semantics in dev vs official geometries).
+    // In the per-plane geometry each front/back plane is its own layer DetElement
+    // named "..._front_P"/"..._back_P", and modules sit at z ~ 0 inside it, so the
+    // side must come from the layer name. Older layouts placed modules at
+    // z = +/-ModuleOffsetFromSupport inside a station layer; keep the sign of the
+    // module translation as a fallback for those. Key uses the cellID's physVolID
+    // values (not the DetElement id, which has different semantics in dev vs
+    // official geometries).
     auto b0Det = m_geoSvc->detector()->detector("B0Tracker");
     if (b0Det.isValid()) {
         const auto findVolID = [](const dd4hep::PlacedVolume& pv, const std::string& name) -> int {
@@ -218,15 +300,61 @@ void B0Trackers::Init() {
             if (!layer_pv.isValid()) continue;
             const int layer_id = findVolID(layer_pv, "layer");
             if (layer_id < 0) continue;
+
+            int layerSide = -1;
+            if (layerName.find("front") != std::string::npos)     layerSide = 1;
+            else if (layerName.find("back") != std::string::npos) layerSide = 0;
+
             for (const auto& [modName, modDE] : layerDE.children()) {
                 const auto pv = modDE.placement();
                 if (!pv.isValid()) continue;
                 const int module_id = findVolID(pv, "module");
                 if (module_id < 0) continue;
-                const TGeoMatrix& mat = pv.matrix();
-                const double* tr = mat.GetTranslation();
-                m_moduleToSide[{layer_id, module_id}] = (tr[2] > 0.0) ? 1 : 0;
+                int side = layerSide;
+                if (side < 0) {
+                    const TGeoMatrix& mat = pv.matrix();
+                    const double* tr = mat.GetTranslation();
+                    side = (tr[2] > 0.0) ? 1 : 0;
+                }
+                m_moduleToSide[{layer_id, module_id}] = side;
+
+                for (const auto& [sensorName, sensorDE] : modDE.children()) {
+                    const auto sensorPV = sensorDE.placement();
+                    if (!sensorPV.isValid()) continue;
+                    const int sensor_id = findVolID(sensorPV, "sensor");
+                    if (sensor_id < 0) continue;
+
+                    dd4hep::CellID refCellID = 0;
+                    try {
+                        m_decoder->set(refCellID, "system", b0Det.id());
+                        m_decoder->set(refCellID, "layer", layer_id);
+                        m_decoder->set(refCellID, "module", module_id);
+                        m_decoder->set(refCellID, "sensor", sensor_id);
+                        m_decoder->set(refCellID, "x", 0);
+                        m_decoder->set(refCellID, "y", 0);
+                    } catch (const std::exception&) {
+                        continue;
+                    }
+                    m_sensorRefs.push_back({static_cast<std::uint64_t>(refCellID), layer_id, module_id, side, sensor_id, sensorDE});
+                }
             }
+        }
+    }
+
+    // Invert the ACTS surface map (sensor volumeID -> surface) so a track state's
+    // reference surface resolves to its sensor exactly, without a proximity scan.
+    // The volumeID keys carry the same physVolID fields we packed into the
+    // SensorRef cellIDs, so a plain lookup filters out all non-B0 surfaces.
+    if (m_actsGeoProvider) {
+        std::unordered_map<std::uint64_t, std::size_t> cellToIdx;
+        for (std::size_t i = 0; i < m_sensorRefs.size(); ++i) {
+            cellToIdx.emplace(m_sensorRefs[i].cellID, i);
+        }
+        for (const auto& [volumeID, surface] : m_actsGeoProvider->surfaceMap()) {
+            if (surface == nullptr) continue;
+            const auto it = cellToIdx.find(volumeID);
+            if (it == cellToIdx.end()) continue;
+            m_surfaceToSensorIdx.emplace(surface->geometryId().value(), it->second);
         }
     }
 
@@ -240,6 +368,9 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     auto simHits     = event->Get<edm4hep::SimTrackerHit>("B0TrackerHits");
     auto tracks      = event->Get<edm4eic::TrackParameters>("B0TrackerCKFTruthSeededTrackParameters");
     auto trajectories = event->Get<edm4eic::Trajectory>("B0TrackerCKFTruthSeededTrajectories");
+    auto actsTrackStates =
+        event->Get<Acts::ConstVectorMultiTrajectory>("B0TrackerCKFTruthSeededActsTrackStates");
+    auto actsTracks = event->Get<Acts::ConstVectorTrackContainer>("B0TrackerCKFTruthSeededActsTracks");
 
     std::lock_guard<std::mutex> lock(m_fillMutex);
 
@@ -247,9 +378,15 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
 
     vm_xR.clear();    vm_yR.clear();    vm_zR.clear();
     vm_xT.clear();    vm_yT.clear();    vm_zT.clear();
+    vm_aclgad_xPixT.clear(); vm_aclgad_yPixT.clear(); vm_aclgad_zPixT.clear();
+    vm_aclgad_dxT.clear(); vm_aclgad_dyT.clear(); vm_aclgad_dzT.clear();
+    vm_aclgad_xPixR.clear(); vm_aclgad_yPixR.clear(); vm_aclgad_zPixR.clear();
+    vm_aclgad_dxR.clear(); vm_aclgad_dyR.clear(); vm_aclgad_dzR.clear();
     vm_detX.clear();  vm_detY.clear();  vm_detZ.clear();
     vm_plane.clear(); vm_module.clear(); vm_side.clear();   vm_sensor.clear();
     vm_pixX.clear();  vm_pixY.clear();   vm_pixZ.clear();
+    vm_aclgad_pixXT.clear(); vm_aclgad_pixYT.clear();
+    vm_aclgad_pixXR.clear(); vm_aclgad_pixYR.clear();
     vm_cellID.clear(); vm_mcIndex.clear(); vm_mcCollectionID.clear();
     vm_eDep.clear();  vm_time.clear();   vm_path.clear();
     vm_pdg.clear();   vm_status.clear();
@@ -278,6 +415,17 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     trk_qOverP.clear(); trk_time.clear();
     trk_index.clear(); trk_charge.clear(); trk_type.clear(); trk_pdg.clear(); trk_surface.clear();
     trk_nStates.clear(); trk_nMeasurements.clear(); trk_nOutliers.clear(); trk_nHoles.clear(); trk_nSharedHits.clear();
+    trk_state_track_index.clear(); trk_state_index.clear(); trk_state_acts_index.clear();
+    trk_state_type.clear(); trk_state_pdg.clear();
+    trk_state_surface.clear();
+    trk_state_loc0.clear(); trk_state_loc1.clear();
+    trk_x_on_plane.clear(); trk_y_on_plane.clear(); trk_z_on_plane.clear();
+    trk_aclgad_xPix.clear(); trk_aclgad_yPix.clear(); trk_aclgad_zPix.clear();
+    trk_aclgad_dx.clear(); trk_aclgad_dy.clear(); trk_aclgad_dz.clear();
+    trk_aclgad_pixX.clear(); trk_aclgad_pixY.clear();
+    trk_aclgad_plane.clear(); trk_aclgad_module.clear(); trk_aclgad_side.clear(); trk_aclgad_sensor.clear();
+    trk_aclgad_cellID.clear();
+    trk_state_theta.clear(); trk_state_phi.clear(); trk_state_qOverP.clear(); trk_state_time.clear();
 
     const double nan = std::numeric_limits<double>::quiet_NaN();
     m_bestTrkIndex = -1;
@@ -309,7 +457,9 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     // Key: (mcCollectionID, mcIndex, layer, side, module) — one entry/exit row per
     // (particle, disk side, module). Tracks the smallest- and largest-time
     // SimTrackerHits contributing to that group so we can report where the particle
-    // entered and exited the silicon in each module.
+    // entered and exited the silicon in each module. Note: a particle that loops
+    // back through the same module still gets a single row spanning both passes
+    // (nStepsEE counts the steps of every pass).
     std::map<std::tuple<uint32_t, int, int, int, int>, std::size_t> entryExitIndex;
     const auto getFieldOr = [this](std::uint64_t cellID, const char* field, int fallback) -> int {
         try {
@@ -317,6 +467,84 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         } catch (...) {
             return fallback;
         }
+    };
+    struct PixelSnap {
+        double x = std::numeric_limits<double>::quiet_NaN();
+        double y = std::numeric_limits<double>::quiet_NaN();
+        double z = std::numeric_limits<double>::quiet_NaN();
+        double dx = std::numeric_limits<double>::quiet_NaN();
+        double dy = std::numeric_limits<double>::quiet_NaN();
+        double dz = std::numeric_limits<double>::quiet_NaN();
+        int pixX = -1;
+        int pixY = -1;
+        std::uint64_t cellID = 0;
+    };
+    const auto snapToAclgadPixel = [this, &nan, &getFieldOr](double xMm, double yMm, double zMm,
+                                                             std::uint64_t referenceCellID,
+                                                             dd4hep::DetElement detElementHint = {}) -> PixelSnap {
+        PixelSnap snap;
+        if (!std::isfinite(xMm) || !std::isfinite(yMm) || !std::isfinite(zMm) ||
+            referenceCellID == 0) {
+            return snap;
+        }
+        try {
+            const dd4hep::Position globalPosition(0.1 * xMm, 0.1 * yMm, 0.1 * zMm);
+            const auto detElement = detElementHint.isValid()
+                ? detElementHint
+                : m_volman.lookupDetElement(referenceCellID);
+            const auto localPosition = detElement.nominal().worldToLocal(globalPosition);
+            const auto volumeID = m_segmentation.volumeID(static_cast<dd4hep::CellID>(referenceCellID));
+            const auto snappedCellID =
+                m_segmentation.cellID(localPosition, globalPosition, volumeID);
+            const auto localCenter = m_segmentation.position(snappedCellID);
+            const auto globalCenter = detElement.nominal().localToWorld(localCenter);
+
+            snap.x = 10.0 * globalCenter.x();
+            snap.y = 10.0 * globalCenter.y();
+            snap.z = 10.0 * globalCenter.z();
+            snap.dx = xMm - snap.x;
+            snap.dy = yMm - snap.y;
+            snap.dz = zMm - snap.z;
+            snap.pixX = getFieldOr(static_cast<std::uint64_t>(snappedCellID), "x", -1);
+            snap.pixY = getFieldOr(static_cast<std::uint64_t>(snappedCellID), "y", -1);
+            snap.cellID = static_cast<std::uint64_t>(snappedCellID);
+        } catch (...) {
+            snap.x = snap.y = snap.z = nan;
+            snap.dx = snap.dy = snap.dz = nan;
+            snap.pixX = snap.pixY = -1;
+            snap.cellID = 0;
+        }
+        return snap;
+    };
+    const auto closestSensorRef = [this](double xMm, double yMm, double zMm) -> const SensorRef* {
+        if (!std::isfinite(xMm) || !std::isfinite(yMm) || !std::isfinite(zMm)) {
+            return nullptr;
+        }
+
+        const dd4hep::Position globalPosition(0.1 * xMm, 0.1 * yMm, 0.1 * zMm);
+        const SensorRef* best = nullptr;
+        double bestScore = std::numeric_limits<double>::infinity();
+        for (const auto& sensorRef : m_sensorRefs) {
+            try {
+                const auto detElement = sensorRef.detElement.isValid()
+                    ? sensorRef.detElement
+                    : m_volman.lookupDetElement(sensorRef.cellID);
+                const auto localPosition = detElement.nominal().worldToLocal(globalPosition);
+                const double localX = 10.0 * localPosition.x();
+                const double localY = 10.0 * localPosition.y();
+                const double localZ = 10.0 * localPosition.z();
+                const double outsideX = std::max(0.0, std::abs(localX) - m_sensorHalfX);
+                const double outsideY = std::max(0.0, std::abs(localY) - m_sensorHalfY);
+                const double score = localZ * localZ + outsideX * outsideX + outsideY * outsideY;
+                if (score < bestScore) {
+                    bestScore = score;
+                    best = &sensorRef;
+                }
+            } catch (...) {
+                continue;
+            }
+        }
+        return best;
     };
 
     std::vector<std::pair<std::uint32_t, int>> primaryIds;
@@ -380,6 +608,9 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         const double path = h->getPathLength();
         const auto id = mc.id();
         const int primaryFlag = isSelectedPrimary(id.collectionID, id.index);
+        const auto truthPixel = snapToAclgadPixel(truthPos.x, truthPos.y, truthPos.z, cid);
+        const auto readoutPixel =
+            snapToAclgadPixel(10. * gpos.x(), 10. * gpos.y(), 10. * gpos.z(), cid);
 
         vm_xR.push_back(10. * gpos.x());     // cm -> mm
         vm_yR.push_back(10. * gpos.y());
@@ -387,6 +618,18 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         vm_xT.push_back(truthPos.x);          // mm (EDM4hep convention)
         vm_yT.push_back(truthPos.y);
         vm_zT.push_back(truthPos.z);
+        vm_aclgad_xPixT.push_back(truthPixel.x);
+        vm_aclgad_yPixT.push_back(truthPixel.y);
+        vm_aclgad_zPixT.push_back(truthPixel.z);
+        vm_aclgad_dxT.push_back(truthPixel.dx);
+        vm_aclgad_dyT.push_back(truthPixel.dy);
+        vm_aclgad_dzT.push_back(truthPixel.dz);
+        vm_aclgad_xPixR.push_back(readoutPixel.x);
+        vm_aclgad_yPixR.push_back(readoutPixel.y);
+        vm_aclgad_zPixR.push_back(readoutPixel.z);
+        vm_aclgad_dxR.push_back(readoutPixel.dx);
+        vm_aclgad_dyR.push_back(readoutPixel.dy);
+        vm_aclgad_dzR.push_back(readoutPixel.dz);
         vm_detX.push_back(10. * lpos.x());   // cm -> mm
         vm_detY.push_back(10. * lpos.y());
         vm_detZ.push_back(10. * lpos.z());
@@ -397,6 +640,10 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         vm_pixX  .push_back(pixX);
         vm_pixY  .push_back(pixY);
         vm_pixZ  .push_back(pixZ);
+        vm_aclgad_pixXT.push_back(truthPixel.pixX);
+        vm_aclgad_pixYT.push_back(truthPixel.pixY);
+        vm_aclgad_pixXR.push_back(readoutPixel.pixX);
+        vm_aclgad_pixYR.push_back(readoutPixel.pixY);
         vm_cellID.push_back(cid);
         vm_eDep  .push_back(h->getEDep());
         vm_time  .push_back(h->getTime());
@@ -514,7 +761,6 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         }
     }
 
-    int trackIndex = 0;
     std::size_t primaryRef = 0;
     for (std::size_t i = 1; i < m_primaryP.size(); ++i) {
         if (m_primaryP[i] > m_primaryP[primaryRef]) primaryRef = i;
@@ -522,24 +768,36 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     const double primaryP = m_primaryP.empty() ? nan : m_primaryP[primaryRef];
     const double primaryPT = m_primaryPT.empty() ? nan : m_primaryPT[primaryRef];
     double bestAbsDeltaP = std::numeric_limits<double>::infinity();
-    for (const auto* tp : tracks) {
-        const float theta  = tp->getTheta();
-        const float phi    = tp->getPhi();
-        const float qOverP = tp->getQOverP();
+    // Iterate trajectories and follow the podio trackParameters relation, so the
+    // pairing does not rely on TrackParameters and Trajectories sharing indices.
+    // Filling in trajectory order also keeps trk_* rows aligned with the ACTS
+    // track container (used by trk_state_pdg below). Positional pairing remains
+    // as a fallback for outputs that didn't fill the relation.
+    for (std::size_t trajIndex = 0; trajIndex < trajectories.size(); ++trajIndex) {
+        const auto* trajectory = trajectories[trajIndex];
+        auto tp = (trajectory->trackParameters_size() > 0)
+            ? trajectory->getTrackParameters(0)
+            : edm4eic::TrackParameters::makeEmpty();
+        if (!tp.isAvailable() && trajIndex < tracks.size()) {
+            tp = *tracks[trajIndex];
+        }
+        if (!tp.isAvailable()) continue;
+
+        const float theta  = tp.getTheta();
+        const float phi    = tp.getPhi();
+        const float qOverP = tp.getQOverP();
         const double p = (qOverP != 0.f) ? std::abs(1.0 / qOverP) : 0.0;
         const double pT = std::abs(p * std::sin(theta));
         const int charge = (qOverP > 0.f) ? 1 : ((qOverP < 0.f) ? -1 : 0);
 
         const double deltaP = p - primaryP;
         const double deltaPT = pT - primaryPT;
-        const int currentTrackIndex = trackIndex++;
-        const bool hasTrajectory = currentTrackIndex >= 0 &&
-                                   static_cast<std::size_t>(currentTrackIndex) < trajectories.size();
-        const int nStates = hasTrajectory ? static_cast<int>(trajectories[currentTrackIndex]->getNStates()) : -1;
-        const int nMeasurements = hasTrajectory ? static_cast<int>(trajectories[currentTrackIndex]->getNMeasurements()) : -1;
-        const int nOutliers = hasTrajectory ? static_cast<int>(trajectories[currentTrackIndex]->getNOutliers()) : -1;
-        const int nHoles = hasTrajectory ? static_cast<int>(trajectories[currentTrackIndex]->getNHoles()) : -1;
-        const int nSharedHits = hasTrajectory ? static_cast<int>(trajectories[currentTrackIndex]->getNSharedHits()) : -1;
+        const int currentTrackIndex = static_cast<int>(trajIndex);
+        const int nStates = static_cast<int>(trajectory->getNStates());
+        const int nMeasurements = static_cast<int>(trajectory->getNMeasurements());
+        const int nOutliers = static_cast<int>(trajectory->getNOutliers());
+        const int nHoles = static_cast<int>(trajectory->getNHoles());
+        const int nSharedHits = static_cast<int>(trajectory->getNSharedHits());
 
         trk_p    .push_back(p);
         trk_pT   .push_back(pT);
@@ -553,10 +811,10 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         trk_qOverP.push_back(qOverP);
         trk_charge.push_back(charge);
         trk_index .push_back(currentTrackIndex);
-        trk_type  .push_back(tp->getType());
-        trk_surface.push_back(tp->getSurface());
-        trk_time  .push_back(tp->getTime());
-        trk_pdg   .push_back(tp->getPdg());
+        trk_type  .push_back(tp.getType());
+        trk_surface.push_back(tp.getSurface());
+        trk_time  .push_back(tp.getTime());
+        trk_pdg   .push_back(tp.getPdg());
         trk_nStates.push_back(nStates);
         trk_nMeasurements.push_back(nMeasurements);
         trk_nOutliers.push_back(nOutliers);
@@ -577,6 +835,133 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             m_bestTrkNOutliers = nOutliers;
             m_bestTrkNHoles = nHoles;
             m_bestTrkNSharedHits = nSharedHits;
+        }
+
+    }
+
+    auto actsGeoProvider = m_actsGeoProvider ? m_actsGeoProvider
+                                             : (m_actsGeoSvc ? m_actsGeoSvc->actsGeoProvider() : nullptr);
+    const auto* actsGeoCtx = actsGeoProvider ? &actsGeoProvider->getActsGeometryContext() : nullptr;
+    if (!actsTracks.empty() && actsTracks.front() != nullptr &&
+        !actsTrackStates.empty() && actsTrackStates.front() != nullptr &&
+        actsGeoCtx != nullptr) {
+        Acts::TrackContainer<Acts::ConstVectorTrackContainer,
+                             Acts::ConstVectorMultiTrajectory,
+                             Acts::detail::ConstRefHolder>
+            trackContainer(*actsTracks.front(), *actsTrackStates.front());
+        const auto nActsTracks = static_cast<int>(trackContainer.size());
+        for (int actsTrackIndex = 0; actsTrackIndex < nActsTracks; ++actsTrackIndex) {
+            const auto track = trackContainer.getTrack(actsTrackIndex);
+            int stateIndex = 0;
+            for (const auto& state : track.trackStatesReversed()) {
+                if (!state.hasReferenceSurface()) {
+                    continue;
+                }
+
+                const auto selectParams = [&state](auto&& fill) {
+                    if (state.hasSmoothed()) {
+                        fill(state.smoothed());
+                    } else if (state.hasFiltered()) {
+                        fill(state.filtered());
+                    } else if (state.hasPredicted()) {
+                        fill(state.predicted());
+                    }
+                };
+
+                double loc0 = nan;
+                double loc1 = nan;
+                double stateTheta = nan;
+                double statePhi = nan;
+                double stateQOverP = nan;
+                double stateTime = nan;
+                selectParams([&](const auto& params) {
+                    loc0 = params[Acts::eBoundLoc0];
+                    loc1 = params[Acts::eBoundLoc1];
+                    stateTheta = params[Acts::eBoundTheta];
+                    statePhi = params[Acts::eBoundPhi];
+                    stateQOverP = params[Acts::eBoundQOverP];
+                    stateTime = params[Acts::eBoundTime];
+                });
+
+                int typeMask = 0;
+                const auto flags = state.typeFlags();
+                if (flags.test(Acts::TrackStateFlag::MeasurementFlag)) typeMask |= (1 << 0);
+                if (flags.test(Acts::TrackStateFlag::ParameterFlag))   typeMask |= (1 << 1);
+                if (flags.test(Acts::TrackStateFlag::OutlierFlag))     typeMask |= (1 << 2);
+                if (flags.test(Acts::TrackStateFlag::HoleFlag))        typeMask |= (1 << 3);
+                if (flags.test(Acts::TrackStateFlag::MaterialFlag))    typeMask |= (1 << 4);
+                if (flags.test(Acts::TrackStateFlag::SharedHitFlag))   typeMask |= (1 << 5);
+                if (flags.test(Acts::TrackStateFlag::SplitHitFlag))    typeMask |= (1 << 6);
+                if (flags.test(Acts::TrackStateFlag::NoExpectedHitFlag)) typeMask |= (1 << 7);
+
+                double globalX = nan;
+                double globalY = nan;
+                double globalZ = nan;
+                if (std::isfinite(loc0) && std::isfinite(loc1) &&
+                    std::isfinite(stateTheta) && std::isfinite(statePhi)) {
+                    const auto& surface = state.referenceSurface();
+                    const Acts::Vector2 local(loc0, loc1);
+                    const Acts::Vector3 direction(std::sin(stateTheta) * std::cos(statePhi),
+                                                  std::sin(stateTheta) * std::sin(statePhi),
+                                                  std::cos(stateTheta));
+                    const auto global = surface.localToGlobal(*actsGeoCtx, local, direction);
+                    globalX = global.x();
+                    globalY = global.y();
+                    globalZ = global.z();
+                }
+
+                // Exact sensor from the inverted ACTS surface map; fall back to the
+                // nearest-sensor scan for surfaces we couldn't map (e.g. older
+                // geometries). The exact path matters in the 1 mm sensor-overlap
+                // regions, where proximity can pick the neighboring module.
+                const SensorRef* sensorRef = nullptr;
+                const auto surfIt =
+                    m_surfaceToSensorIdx.find(state.referenceSurface().geometryId().value());
+                if (surfIt != m_surfaceToSensorIdx.end()) {
+                    sensorRef = &m_sensorRefs[surfIt->second];
+                } else {
+                    sensorRef = closestSensorRef(globalX, globalY, globalZ);
+                }
+                const auto trackPixel = sensorRef
+                    ? snapToAclgadPixel(globalX, globalY, globalZ, sensorRef->cellID,
+                                        sensorRef->detElement)
+                    : PixelSnap{};
+
+                trk_state_track_index.push_back(actsTrackIndex);
+                trk_state_index.push_back(stateIndex++);
+                trk_state_acts_index.push_back(static_cast<int>(state.index()));
+                trk_state_type.push_back(typeMask);
+                trk_state_surface.push_back(state.referenceSurface().geometryId().value());
+                trk_state_loc0.push_back(loc0);
+                trk_state_loc1.push_back(loc1);
+                trk_x_on_plane.push_back(globalX);
+                trk_y_on_plane.push_back(globalY);
+                trk_z_on_plane.push_back(globalZ);
+                trk_aclgad_xPix.push_back(trackPixel.x);
+                trk_aclgad_yPix.push_back(trackPixel.y);
+                trk_aclgad_zPix.push_back(trackPixel.z);
+                trk_aclgad_dx.push_back(trackPixel.dx);
+                trk_aclgad_dy.push_back(trackPixel.dy);
+                trk_aclgad_dz.push_back(trackPixel.dz);
+                trk_aclgad_pixX.push_back(trackPixel.pixX);
+                trk_aclgad_pixY.push_back(trackPixel.pixY);
+                trk_aclgad_plane.push_back(sensorRef ? sensorRef->plane : -1);
+                trk_aclgad_module.push_back(sensorRef ? sensorRef->module : -1);
+                trk_aclgad_side.push_back(sensorRef ? sensorRef->side : -1);
+                trk_aclgad_sensor.push_back(sensorRef ? sensorRef->sensor : -1);
+                trk_aclgad_cellID.push_back(trackPixel.cellID);
+                trk_state_theta.push_back(stateTheta);
+                trk_state_phi.push_back(statePhi);
+                trk_state_qOverP.push_back(stateQOverP);
+                trk_state_time.push_back(stateTime);
+                // trk_* rows are filled in trajectory order, which matches the ACTS
+                // track container order. Sentinel is 0 (PDG "unknown"), not -1,
+                // since -1 is a valid PDG code (anti-down).
+                trk_state_pdg.push_back(
+                    (actsTrackIndex >= 0 && static_cast<std::size_t>(actsTrackIndex) < trk_pdg.size())
+                        ? trk_pdg[actsTrackIndex]
+                        : 0);
+            }
         }
     }
 
