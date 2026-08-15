@@ -7,6 +7,7 @@
 #include <limits>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <tuple>
 #include <unordered_map>
@@ -29,6 +30,8 @@
 #include <edm4hep/MCParticle.h>
 #include <edm4hep/SimTrackerHit.h>
 
+#include <edm4eic/MCRecoTrackParticleAssociation.h>
+#include <edm4eic/Track.h>
 #include <edm4eic/TrackParameters.h>
 #include <edm4eic/Trajectory.h>
 
@@ -38,6 +41,15 @@
 #include <algorithms/tracking/ActsGeometryProvider.h>
 #include <services/geometry/acts/ACTSGeo_service.h>
 
+// B0Trackers/hits branch map (p13 names kept):
+//   trk_* / best_trk_*     = B0TrackerCKFTruthSeeded* (truth-seeded CKF, filtered)
+//   ckf_trk_* / ckf_best_* = B0TrackerCKF*            (stub-seeded CKF, filtered)
+//   station*               = physical disk 1-4 from layer id (layer+1)/2
+//   sel_primary_*          = highest-p status-1 proton (used for |Δp| matching)
+//   beam_proton_*          = status-4 proton   (alias of genP*)
+//   scattered_e_*          = status-1 electron (alias of genBeamP*; not the beam)
+//   scattered_p_*          = status-1 proton   (alias of genBeamPP*)
+//   n_stations_primary     = unique stations with a primary (status-1 proton) truth hit
 extern "C" {
     void InitPlugin(JApplication* app) {
         InitJANAPlugin(app);
@@ -81,7 +93,8 @@ void B0Trackers::Init() {
     m_tree->Branch("aclgad_dxR", &vm_aclgad_dxR);
     m_tree->Branch("aclgad_dyR", &vm_aclgad_dyR);
     m_tree->Branch("aclgad_dzR", &vm_aclgad_dzR);
-    m_tree->Branch("plane",     &vm_plane);
+    m_tree->Branch("plane",     &vm_plane);          // ACTS layer id 1-8
+    m_tree->Branch("station",   &vm_station);        // physical disk 1-4; (layer+1)/2
     m_tree->Branch("module",    &vm_module);
     m_tree->Branch("side",      &vm_side);           // -1=unknown, 0=back, 1=front
     m_tree->Branch("sensor",    &vm_sensor);
@@ -115,6 +128,7 @@ void B0Trackers::Init() {
     m_tree->Branch("pathP",     &vm_pathP);
     m_tree->Branch("timeP",     &vm_timeP);
     m_tree->Branch("planeP",    &vm_planeP);
+    m_tree->Branch("stationP",  &vm_stationP);
     m_tree->Branch("moduleP",   &vm_moduleP);
     m_tree->Branch("sideP",     &vm_sideP);          // -1=unknown, 0=back, 1=front
     m_tree->Branch("sensorP",   &vm_sensorP);
@@ -143,82 +157,50 @@ void B0Trackers::Init() {
     m_tree->Branch("primary_pz", &m_primaryPz);
     m_tree->Branch("primary_p",  &m_primaryP);
     m_tree->Branch("primary_pT", &m_primaryPT);
-    m_tree->Branch("genPpx",    &m_genPpx);
+    // Historical names kept. Prefer the explicit aliases below.
+    m_tree->Branch("genPpx",    &m_genPpx);           // beam proton, status 4
     m_tree->Branch("genPpy",    &m_genPpy);
     m_tree->Branch("genPpz",    &m_genPpz);
     m_tree->Branch("genPp",     &m_genPp);
     m_tree->Branch("genPpT",    &m_genPpT);
-    m_tree->Branch("genBeamP",  &m_genBeamP);
+    m_tree->Branch("genBeamP",  &m_genBeamP);         // scattered electron, status 1
     m_tree->Branch("genBeamPT", &m_genBeamPT);
     m_tree->Branch("genBeamPx", &m_genBeamPx);
     m_tree->Branch("genBeamPy", &m_genBeamPy);
     m_tree->Branch("genBeamPz", &m_genBeamPz);
-    m_tree->Branch("genBeamPP", &m_genBeamPP);
+    m_tree->Branch("genBeamPP", &m_genBeamPP);        // scattered proton, status 1
     m_tree->Branch("genBeamPPT",&m_genBeamPPT);
     m_tree->Branch("genBeamPPx",&m_genBeamPPx);
     m_tree->Branch("genBeamPPy",&m_genBeamPPy);
     m_tree->Branch("genBeamPPz",&m_genBeamPPz);
-    m_tree->Branch("trk_p",     &trk_p);
-    m_tree->Branch("trk_pT",    &trk_pT);
-    m_tree->Branch("trk_delta_p", &trk_delta_p);
-    m_tree->Branch("trk_delta_pT", &trk_delta_pT);
-    m_tree->Branch("trk_theta", &trk_theta);
-    m_tree->Branch("trk_phi",   &trk_phi);
-    m_tree->Branch("trk_px",    &trk_px);
-    m_tree->Branch("trk_py",    &trk_py);
-    m_tree->Branch("trk_pz",    &trk_pz);
-    m_tree->Branch("trk_qOverP",&trk_qOverP);
-    m_tree->Branch("trk_charge",&trk_charge);
-    m_tree->Branch("trk_index", &trk_index);
-    m_tree->Branch("trk_type",  &trk_type);
-    m_tree->Branch("trk_surface", &trk_surface);
-    m_tree->Branch("trk_time",  &trk_time);
-    m_tree->Branch("trk_pdg",   &trk_pdg);
-    m_tree->Branch("trk_nStates", &trk_nStates);
-    m_tree->Branch("trk_nMeasurements", &trk_nMeasurements);
-    m_tree->Branch("trk_nOutliers", &trk_nOutliers);
-    m_tree->Branch("trk_nHoles", &trk_nHoles);
-    m_tree->Branch("trk_nSharedHits", &trk_nSharedHits);
-    m_tree->Branch("trk_state_track_index", &trk_state_track_index);
-    m_tree->Branch("trk_state_index", &trk_state_index);
-    m_tree->Branch("trk_state_acts_index", &trk_state_acts_index);
-    m_tree->Branch("trk_state_type", &trk_state_type);
-    m_tree->Branch("trk_state_surface", &trk_state_surface);
-    m_tree->Branch("trk_state_loc0", &trk_state_loc0);
-    m_tree->Branch("trk_state_loc1", &trk_state_loc1);
-    m_tree->Branch("trk_x_on_plane", &trk_x_on_plane);
-    m_tree->Branch("trk_y_on_plane", &trk_y_on_plane);
-    m_tree->Branch("trk_z_on_plane", &trk_z_on_plane);
-    m_tree->Branch("trk_aclgad_xPix", &trk_aclgad_xPix);
-    m_tree->Branch("trk_aclgad_yPix", &trk_aclgad_yPix);
-    m_tree->Branch("trk_aclgad_zPix", &trk_aclgad_zPix);
-    m_tree->Branch("trk_aclgad_dx", &trk_aclgad_dx);
-    m_tree->Branch("trk_aclgad_dy", &trk_aclgad_dy);
-    m_tree->Branch("trk_aclgad_dz", &trk_aclgad_dz);
-    m_tree->Branch("trk_aclgad_pixX", &trk_aclgad_pixX);
-    m_tree->Branch("trk_aclgad_pixY", &trk_aclgad_pixY);
-    m_tree->Branch("trk_aclgad_plane", &trk_aclgad_plane);
-    m_tree->Branch("trk_aclgad_module", &trk_aclgad_module);
-    m_tree->Branch("trk_aclgad_side", &trk_aclgad_side);
-    m_tree->Branch("trk_aclgad_sensor", &trk_aclgad_sensor);
-    m_tree->Branch("trk_aclgad_cellID", &trk_aclgad_cellID);
-    m_tree->Branch("trk_state_theta", &trk_state_theta);
-    m_tree->Branch("trk_state_phi", &trk_state_phi);
-    m_tree->Branch("trk_state_qOverP", &trk_state_qOverP);
-    m_tree->Branch("trk_state_time", &trk_state_time);
-    m_tree->Branch("trk_state_pdg", &trk_state_pdg);
-    m_tree->Branch("best_trk_index", &m_bestTrkIndex);
-    m_tree->Branch("best_trk_p", &m_bestTrkP);
-    m_tree->Branch("best_trk_pT", &m_bestTrkPT);
-    m_tree->Branch("best_trk_delta_p", &m_bestTrkDeltaP);
-    m_tree->Branch("best_trk_delta_pT", &m_bestTrkDeltaPT);
-    m_tree->Branch("best_trk_theta", &m_bestTrkTheta);
-    m_tree->Branch("best_trk_phi", &m_bestTrkPhi);
-    m_tree->Branch("best_trk_nStates", &m_bestTrkNStates);
-    m_tree->Branch("best_trk_nMeasurements", &m_bestTrkNMeasurements);
-    m_tree->Branch("best_trk_nOutliers", &m_bestTrkNOutliers);
-    m_tree->Branch("best_trk_nHoles", &m_bestTrkNHoles);
-    m_tree->Branch("best_trk_nSharedHits", &m_bestTrkNSharedHits);
+    m_tree->Branch("beam_proton_px", &m_genPpx);
+    m_tree->Branch("beam_proton_py", &m_genPpy);
+    m_tree->Branch("beam_proton_pz", &m_genPpz);
+    m_tree->Branch("beam_proton_p",  &m_genPp);
+    m_tree->Branch("beam_proton_pT", &m_genPpT);
+    m_tree->Branch("scattered_e_px", &m_genBeamPx);
+    m_tree->Branch("scattered_e_py", &m_genBeamPy);
+    m_tree->Branch("scattered_e_pz", &m_genBeamPz);
+    m_tree->Branch("scattered_e_p",  &m_genBeamP);
+    m_tree->Branch("scattered_e_pT", &m_genBeamPT);
+    m_tree->Branch("scattered_p_px", &m_genBeamPPx);
+    m_tree->Branch("scattered_p_py", &m_genBeamPPy);
+    m_tree->Branch("scattered_p_pz", &m_genBeamPPz);
+    m_tree->Branch("scattered_p_p",  &m_genBeamPP);
+    m_tree->Branch("scattered_p_pT", &m_genBeamPPT);
+    m_tree->Branch("sel_primary_mcIndex", &m_selPrimaryMcIndex);
+    m_tree->Branch("sel_primary_mcCollectionID", &m_selPrimaryMcCollectionID);
+    m_tree->Branch("sel_primary_px", &m_selPrimaryPx);
+    m_tree->Branch("sel_primary_py", &m_selPrimaryPy);
+    m_tree->Branch("sel_primary_pz", &m_selPrimaryPz);
+    m_tree->Branch("sel_primary_p",  &m_selPrimaryP);
+    m_tree->Branch("sel_primary_pT", &m_selPrimaryPT);
+    m_tree->Branch("sel_primary_thscat_mrad", &m_selPrimaryThscatMrad);
+    m_tree->Branch("n_stations_primary", &m_nStationsPrimary);
+
+    // trk_* = B0TrackerCKFTruthSeeded (truth-seeded). ckf_trk_* = B0TrackerCKF (stub-seeded).
+    bindTrackChain("trk_", "best_trk_", m_ts);
+    bindTrackChain("ckf_trk_", "ckf_best_trk_", m_ckf);
 
     // Entry/exit summary branches (one row per mc-particle/disk/side/module).
     m_tree->Branch("xEntry",     &vm_xEntry);
@@ -244,6 +226,7 @@ void B0Trackers::Init() {
     m_tree->Branch("cellIDEntry", &vm_cellIDEntry);
     m_tree->Branch("cellIDExit",  &vm_cellIDExit);
     m_tree->Branch("planeEE",    &vm_planeEE);
+    m_tree->Branch("stationEE",  &vm_stationEE);
     m_tree->Branch("moduleEE",   &vm_moduleEE);
     m_tree->Branch("sideEE",     &vm_sideEE);          // 0=back, 1=front
     m_tree->Branch("pdgEE",      &vm_pdgEE);
@@ -366,11 +349,21 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     // and JANA already serializes that work internally.
     auto mcparticles = event->Get<edm4hep::MCParticle>("MCParticles");
     auto simHits     = event->Get<edm4hep::SimTrackerHit>("B0TrackerHits");
-    auto tracks      = event->Get<edm4eic::TrackParameters>("B0TrackerCKFTruthSeededTrackParameters");
-    auto trajectories = event->Get<edm4eic::Trajectory>("B0TrackerCKFTruthSeededTrajectories");
-    auto actsTrackStates =
+    auto tsTracks = event->Get<edm4eic::TrackParameters>("B0TrackerCKFTruthSeededTrackParameters");
+    auto tsTrajectories = event->Get<edm4eic::Trajectory>("B0TrackerCKFTruthSeededTrajectories");
+    auto tsEdmTracks = event->Get<edm4eic::Track>("B0TrackerCKFTruthSeededTracks");
+    auto tsAssocs = event->Get<edm4eic::MCRecoTrackParticleAssociation>(
+        "B0TrackerCKFTruthSeededTrackAssociations");
+    auto tsActsTrackStates =
         event->Get<Acts::ConstVectorMultiTrajectory>("B0TrackerCKFTruthSeededActsTrackStates");
-    auto actsTracks = event->Get<Acts::ConstVectorTrackContainer>("B0TrackerCKFTruthSeededActsTracks");
+    auto tsActsTracks = event->Get<Acts::ConstVectorTrackContainer>("B0TrackerCKFTruthSeededActsTracks");
+    auto ckfTracks = event->Get<edm4eic::TrackParameters>("B0TrackerCKFTrackParameters");
+    auto ckfTrajectories = event->Get<edm4eic::Trajectory>("B0TrackerCKFTrajectories");
+    auto ckfEdmTracks = event->Get<edm4eic::Track>("B0TrackerCKFTracks");
+    auto ckfAssocs = event->Get<edm4eic::MCRecoTrackParticleAssociation>("B0TrackerCKFTrackAssociations");
+    auto ckfActsTrackStates =
+        event->Get<Acts::ConstVectorMultiTrajectory>("B0TrackerCKFActsTrackStates");
+    auto ckfActsTracks = event->Get<Acts::ConstVectorTrackContainer>("B0TrackerCKFActsTracks");
 
     std::lock_guard<std::mutex> lock(m_fillMutex);
 
@@ -383,7 +376,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     vm_aclgad_xPixR.clear(); vm_aclgad_yPixR.clear(); vm_aclgad_zPixR.clear();
     vm_aclgad_dxR.clear(); vm_aclgad_dyR.clear(); vm_aclgad_dzR.clear();
     vm_detX.clear();  vm_detY.clear();  vm_detZ.clear();
-    vm_plane.clear(); vm_module.clear(); vm_side.clear();   vm_sensor.clear();
+    vm_plane.clear(); vm_station.clear(); vm_module.clear(); vm_side.clear(); vm_sensor.clear();
     vm_pixX.clear();  vm_pixY.clear();   vm_pixZ.clear();
     vm_aclgad_pixXT.clear(); vm_aclgad_pixYT.clear();
     vm_aclgad_pixXR.clear(); vm_aclgad_pixYR.clear();
@@ -394,7 +387,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     vm_px.clear();    vm_py.clear();    vm_pz.clear();   vm_p.clear();    vm_pT.clear();
 
     vm_xP.clear();      vm_yP.clear();      vm_zP.clear();      vm_pathP.clear();   vm_timeP.clear();
-    vm_planeP.clear();  vm_moduleP.clear(); vm_sideP.clear(); vm_sensorP.clear();
+    vm_planeP.clear();  vm_stationP.clear(); vm_moduleP.clear(); vm_sideP.clear(); vm_sensorP.clear();
 
     vm_xEntry.clear();   vm_yEntry.clear();  vm_zEntry.clear();  vm_timeEntry.clear();
     vm_pxEntry.clear();  vm_pyEntry.clear(); vm_pzEntry.clear(); vm_pEntry.clear(); vm_pTEntry.clear();
@@ -402,44 +395,25 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     vm_pxExit.clear();   vm_pyExit.clear();  vm_pzExit.clear();  vm_pExit.clear();  vm_pTExit.clear();
     vm_sensorEntry.clear(); vm_sensorExit.clear();
     vm_cellIDEntry.clear(); vm_cellIDExit.clear();
-    vm_planeEE.clear();  vm_moduleEE.clear(); vm_sideEE.clear();  vm_pdgEE.clear();
+    vm_planeEE.clear();  vm_stationEE.clear(); vm_moduleEE.clear(); vm_sideEE.clear();  vm_pdgEE.clear();
     vm_isPrimaryEE.clear();
     vm_mcIndexEE.clear(); vm_mcCollectionIDEE.clear(); vm_nStepsEE.clear();
     vm_statusEE.clear();
     vm_pdgP.clear();    vm_statusP.clear(); vm_isPrimaryP.clear(); vm_mcIndexP.clear(); vm_mcCollectionIDP.clear();
     vm_pxP.clear();     vm_pyP.clear();     vm_pzP.clear();     vm_pP.clear();     vm_pTP.clear();
 
-    trk_p.clear();    trk_pT.clear();   trk_delta_p.clear(); trk_delta_pT.clear();
-    trk_px.clear();   trk_py.clear();   trk_pz.clear();
-    trk_theta.clear();trk_phi.clear();
-    trk_qOverP.clear(); trk_time.clear();
-    trk_index.clear(); trk_charge.clear(); trk_type.clear(); trk_pdg.clear(); trk_surface.clear();
-    trk_nStates.clear(); trk_nMeasurements.clear(); trk_nOutliers.clear(); trk_nHoles.clear(); trk_nSharedHits.clear();
-    trk_state_track_index.clear(); trk_state_index.clear(); trk_state_acts_index.clear();
-    trk_state_type.clear(); trk_state_pdg.clear();
-    trk_state_surface.clear();
-    trk_state_loc0.clear(); trk_state_loc1.clear();
-    trk_x_on_plane.clear(); trk_y_on_plane.clear(); trk_z_on_plane.clear();
-    trk_aclgad_xPix.clear(); trk_aclgad_yPix.clear(); trk_aclgad_zPix.clear();
-    trk_aclgad_dx.clear(); trk_aclgad_dy.clear(); trk_aclgad_dz.clear();
-    trk_aclgad_pixX.clear(); trk_aclgad_pixY.clear();
-    trk_aclgad_plane.clear(); trk_aclgad_module.clear(); trk_aclgad_side.clear(); trk_aclgad_sensor.clear();
-    trk_aclgad_cellID.clear();
-    trk_state_theta.clear(); trk_state_phi.clear(); trk_state_qOverP.clear(); trk_state_time.clear();
-
     const double nan = std::numeric_limits<double>::quiet_NaN();
-    m_bestTrkIndex = -1;
-    m_bestTrkNStates = -1;
-    m_bestTrkNMeasurements = -1;
-    m_bestTrkNOutliers = -1;
-    m_bestTrkNHoles = -1;
-    m_bestTrkNSharedHits = -1;
-    m_bestTrkP = nan;
-    m_bestTrkPT = nan;
-    m_bestTrkDeltaP = nan;
-    m_bestTrkDeltaPT = nan;
-    m_bestTrkTheta = nan;
-    m_bestTrkPhi = nan;
+    m_ts.clear(nan);
+    m_ckf.clear(nan);
+    m_selPrimaryMcIndex = -1;
+    m_selPrimaryMcCollectionID = 0;
+    m_selPrimaryPx = nan;
+    m_selPrimaryPy = nan;
+    m_selPrimaryPz = nan;
+    m_selPrimaryP = nan;
+    m_selPrimaryPT = nan;
+    m_selPrimaryThscatMrad = nan;
+    m_nStationsPrimary = 0;
 
     beam_px.clear();  beam_py.clear();  beam_pz.clear(); beam_p.clear(); beam_pT.clear();
     beam_pdg.clear();
@@ -634,6 +608,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         vm_detY.push_back(10. * lpos.y());
         vm_detZ.push_back(10. * lpos.z());
         vm_plane .push_back(plane);
+        vm_station.push_back(stationFromLayer(plane));
         vm_module.push_back(module);
         vm_side  .push_back(side);
         vm_sensor.push_back(sensor);
@@ -670,6 +645,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             vm_pathP  .push_back(path);
             vm_timeP  .push_back(h->getTime());
             vm_planeP .push_back(plane);
+            vm_stationP.push_back(stationFromLayer(plane));
             vm_moduleP.push_back(module);
             vm_sideP  .push_back(side);
             vm_sensorP.push_back(sensor);
@@ -720,7 +696,9 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 vm_pTExit .push_back(pT);
                 vm_sensorEntry.push_back(sensor);   vm_sensorExit.push_back(sensor);
                 vm_cellIDEntry.push_back(cid);      vm_cellIDExit.push_back(cid);
-                vm_planeEE.push_back(plane);        vm_moduleEE.push_back(module);
+                vm_planeEE.push_back(plane);
+                vm_stationEE.push_back(stationFromLayer(plane));
+                vm_moduleEE.push_back(module);
                 vm_sideEE.push_back(side);
                 vm_pdgEE  .push_back(mc.getPDG());
                 vm_isPrimaryEE.push_back(primaryFlag);
@@ -761,94 +739,220 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         }
     }
 
+    // Generator-status convention (HepMC/Pythia8): 1 = stable final-state, 4 = beam.
+    for (const auto* part : mcparticles) {
+        const auto p = part->getMomentum();
+        const int  pdg    = part->getPDG();
+        const int  status = part->getGeneratorStatus();
+        const double pmag = std::sqrt(p.x*p.x + p.y*p.y + p.z*p.z);
+        const double pT = std::hypot(p.x, p.y);
+
+        if (status == 4 &&
+            (pdg == 22 || pdg == 11 || pdg == -11 || pdg == 2212)) {
+            beam_px .push_back(p.x);
+            beam_py .push_back(p.y);
+            beam_pz .push_back(p.z);
+            beam_p  .push_back(pmag);
+            beam_pT .push_back(pT);
+            beam_pdg.push_back(pdg);
+        }
+        if (pdg == 2212 && status == 4) {
+            m_genPpx.push_back(p.x);
+            m_genPpy.push_back(p.y);
+            m_genPpz.push_back(p.z);
+            m_genPp .push_back(pmag);
+            m_genPpT.push_back(pT);
+        }
+        if (pdg == 2212 && status == 1) {
+            m_genBeamPPx.push_back(p.x);
+            m_genBeamPPy.push_back(p.y);
+            m_genBeamPPz.push_back(p.z);
+            m_genBeamPP .push_back(pmag);
+            m_genBeamPPT.push_back(pT);
+        }
+        if (pdg == 11 && status == 1) {
+            m_genBeamPx.push_back(p.x);
+            m_genBeamPy.push_back(p.y);
+            m_genBeamPz.push_back(p.z);
+            m_genBeamP .push_back(pmag);
+            m_genBeamPT.push_back(pT);
+        }
+    }
+
     std::size_t primaryRef = 0;
     for (std::size_t i = 1; i < m_primaryP.size(); ++i) {
         if (m_primaryP[i] > m_primaryP[primaryRef]) primaryRef = i;
     }
     const double primaryP = m_primaryP.empty() ? nan : m_primaryP[primaryRef];
     const double primaryPT = m_primaryPT.empty() ? nan : m_primaryPT[primaryRef];
-    double bestAbsDeltaP = std::numeric_limits<double>::infinity();
-    // Iterate trajectories and follow the podio trackParameters relation, so the
-    // pairing does not rely on TrackParameters and Trajectories sharing indices.
-    // Filling in trajectory order also keeps trk_* rows aligned with the ACTS
-    // track container (used by trk_state_pdg below). Positional pairing remains
-    // as a fallback for outputs that didn't fill the relation.
-    for (std::size_t trajIndex = 0; trajIndex < trajectories.size(); ++trajIndex) {
-        const auto* trajectory = trajectories[trajIndex];
-        auto tp = (trajectory->trackParameters_size() > 0)
-            ? trajectory->getTrackParameters(0)
-            : edm4eic::TrackParameters::makeEmpty();
-        if (!tp.isAvailable() && trajIndex < tracks.size()) {
-            tp = *tracks[trajIndex];
+    if (!m_primaryP.empty()) {
+        m_selPrimaryMcIndex = m_primaryMcIndex[primaryRef];
+        m_selPrimaryMcCollectionID = m_primaryMcCollectionID[primaryRef];
+        m_selPrimaryPx = m_primaryPx[primaryRef];
+        m_selPrimaryPy = m_primaryPy[primaryRef];
+        m_selPrimaryPz = m_primaryPz[primaryRef];
+        m_selPrimaryP = primaryP;
+        m_selPrimaryPT = primaryPT;
+    }
+    if (std::isfinite(primaryP) && !m_genPp.empty()) {
+        const double bx = m_genPpx[0];
+        const double by = m_genPpy[0];
+        const double bz = m_genPpz[0];
+        const double bn = std::sqrt(bx * bx + by * by + bz * bz);
+        const double pn = primaryP;
+        if (bn > 0.0 && pn > 0.0) {
+            const double cosang = std::clamp(
+                (m_selPrimaryPx * bx + m_selPrimaryPy * by + m_selPrimaryPz * bz) / (pn * bn),
+                -1.0, 1.0);
+            m_selPrimaryThscatMrad = 1.0e3 * std::acos(cosang);
         }
-        if (!tp.isAvailable()) continue;
-
-        const float theta  = tp.getTheta();
-        const float phi    = tp.getPhi();
-        const float qOverP = tp.getQOverP();
-        const double p = (qOverP != 0.f) ? std::abs(1.0 / qOverP) : 0.0;
-        const double pT = std::abs(p * std::sin(theta));
-        const int charge = (qOverP > 0.f) ? 1 : ((qOverP < 0.f) ? -1 : 0);
-
-        const double deltaP = p - primaryP;
-        const double deltaPT = pT - primaryPT;
-        const int currentTrackIndex = static_cast<int>(trajIndex);
-        const int nStates = static_cast<int>(trajectory->getNStates());
-        const int nMeasurements = static_cast<int>(trajectory->getNMeasurements());
-        const int nOutliers = static_cast<int>(trajectory->getNOutliers());
-        const int nHoles = static_cast<int>(trajectory->getNHoles());
-        const int nSharedHits = static_cast<int>(trajectory->getNSharedHits());
-
-        trk_p    .push_back(p);
-        trk_pT   .push_back(pT);
-        trk_delta_p .push_back(deltaP);
-        trk_delta_pT.push_back(deltaPT);
-        trk_theta.push_back(theta);
-        trk_phi  .push_back(phi);
-        trk_px   .push_back(pT * std::cos(phi));
-        trk_py   .push_back(pT * std::sin(phi));
-        trk_pz   .push_back(p * std::cos(theta));
-        trk_qOverP.push_back(qOverP);
-        trk_charge.push_back(charge);
-        trk_index .push_back(currentTrackIndex);
-        trk_type  .push_back(tp.getType());
-        trk_surface.push_back(tp.getSurface());
-        trk_time  .push_back(tp.getTime());
-        trk_pdg   .push_back(tp.getPdg());
-        trk_nStates.push_back(nStates);
-        trk_nMeasurements.push_back(nMeasurements);
-        trk_nOutliers.push_back(nOutliers);
-        trk_nHoles.push_back(nHoles);
-        trk_nSharedHits.push_back(nSharedHits);
-
-        if (std::isfinite(deltaP) && std::abs(deltaP) < bestAbsDeltaP) {
-            bestAbsDeltaP = std::abs(deltaP);
-            m_bestTrkIndex = currentTrackIndex;
-            m_bestTrkP = p;
-            m_bestTrkPT = pT;
-            m_bestTrkDeltaP = deltaP;
-            m_bestTrkDeltaPT = deltaPT;
-            m_bestTrkTheta = theta;
-            m_bestTrkPhi = phi;
-            m_bestTrkNStates = nStates;
-            m_bestTrkNMeasurements = nMeasurements;
-            m_bestTrkNOutliers = nOutliers;
-            m_bestTrkNHoles = nHoles;
-            m_bestTrkNSharedHits = nSharedHits;
+    }
+    {
+        std::set<int> stations;
+        for (std::size_t i = 0; i < vm_stationP.size(); ++i) {
+            if (vm_isPrimaryP[i] == 1 && vm_stationP[i] > 0) {
+                stations.insert(vm_stationP[i]);
+            }
         }
-
+        m_nStationsPrimary = static_cast<int>(stations.size());
     }
 
-    auto actsGeoProvider = m_actsGeoProvider ? m_actsGeoProvider
-                                             : (m_actsGeoSvc ? m_actsGeoSvc->actsGeoProvider() : nullptr);
-    const auto* actsGeoCtx = actsGeoProvider ? &actsGeoProvider->getActsGeometryContext() : nullptr;
-    if (!actsTracks.empty() && actsTracks.front() != nullptr &&
-        !actsTrackStates.empty() && actsTrackStates.front() != nullptr &&
-        actsGeoCtx != nullptr) {
+    auto fillChain = [&](TrackChain& out,
+                         const auto& trajectories,
+                         const auto& tracks,
+                         const auto& edmTracks,
+                         const auto& assocs,
+                         const auto& actsTracks,
+                         const auto& actsStates) {
+        std::unordered_map<int, std::pair<int, double>> bestAssoc;
+        for (const auto* assoc : assocs) {
+            if (assoc == nullptr) continue;
+            const auto rec = assoc->getRec();
+            const auto sim = assoc->getSim();
+            if (!rec.isAvailable() || !sim.isAvailable()) continue;
+            const int recIndex = rec.id().index;
+            const double weight = assoc->getWeight();
+            auto it = bestAssoc.find(recIndex);
+            if (it == bestAssoc.end() || weight > it->second.second) {
+                bestAssoc[recIndex] = {sim.id().index, weight};
+            }
+        }
+
+        double bestAbsDeltaP = std::numeric_limits<double>::infinity();
+        for (std::size_t trajIndex = 0; trajIndex < trajectories.size(); ++trajIndex) {
+            const auto* trajectory = trajectories[trajIndex];
+            auto tp = (trajectory->trackParameters_size() > 0)
+                ? trajectory->getTrackParameters(0)
+                : edm4eic::TrackParameters::makeEmpty();
+            if (!tp.isAvailable() && trajIndex < tracks.size()) {
+                tp = *tracks[trajIndex];
+            }
+            if (!tp.isAvailable()) continue;
+
+            const float theta  = tp.getTheta();
+            const float phi    = tp.getPhi();
+            const float qOverP = tp.getQOverP();
+            const double p = (qOverP != 0.f) ? std::abs(1.0 / qOverP) : 0.0;
+            const double pT = std::abs(p * std::sin(theta));
+            const int charge = (qOverP > 0.f) ? 1 : ((qOverP < 0.f) ? -1 : 0);
+            const double deltaP = p - primaryP;
+            const double deltaPT = pT - primaryPT;
+            const int currentTrackIndex = static_cast<int>(trajIndex);
+            const int nStates = static_cast<int>(trajectory->getNStates());
+            const int nMeasurements = static_cast<int>(trajectory->getNMeasurements());
+            const int nOutliers = static_cast<int>(trajectory->getNOutliers());
+            const int nHoles = static_cast<int>(trajectory->getNHoles());
+            const int nSharedHits = static_cast<int>(trajectory->getNSharedHits());
+
+            double chi2 = nan;
+            int ndf = -1;
+            if (trajIndex < edmTracks.size() && edmTracks[trajIndex] != nullptr) {
+                chi2 = edmTracks[trajIndex]->getChi2();
+                ndf = static_cast<int>(edmTracks[trajIndex]->getNdf());
+            }
+            int assocMc = -1;
+            double assocW = 0.0;
+            if (const auto it = bestAssoc.find(currentTrackIndex); it != bestAssoc.end()) {
+                assocMc = it->second.first;
+                assocW = it->second.second;
+            }
+
+            out.p.push_back(p);
+            out.pT.push_back(pT);
+            out.delta_p.push_back(deltaP);
+            out.delta_pT.push_back(deltaPT);
+            out.theta.push_back(theta);
+            out.phi.push_back(phi);
+            out.px.push_back(pT * std::cos(phi));
+            out.py.push_back(pT * std::sin(phi));
+            out.pz.push_back(p * std::cos(theta));
+            out.qOverP.push_back(qOverP);
+
+            const auto& loc = tp.getLoc();
+            const auto& cov = tp.getCovariance();
+            const auto diagSigma = [&cov](unsigned k) -> double {
+                const double var = cov(k, k);
+                return (std::isfinite(var) && var >= 0.0) ? std::sqrt(var)
+                                                          : std::numeric_limits<double>::quiet_NaN();
+            };
+            out.loc0.push_back(loc.a);
+            out.loc1.push_back(loc.b);
+            out.sigma_loc0.push_back(diagSigma(0));
+            out.sigma_loc1.push_back(diagSigma(1));
+            out.sigma_phi.push_back(diagSigma(2));
+            out.sigma_theta.push_back(diagSigma(3));
+            out.sigma_qOverP.push_back(diagSigma(4));
+            out.sigma_time.push_back(diagSigma(5));
+            out.chi2.push_back(chi2);
+            out.ndf.push_back(ndf);
+            out.charge.push_back(charge);
+            out.index.push_back(currentTrackIndex);
+            out.type.push_back(tp.getType());
+            out.surface.push_back(tp.getSurface());
+            out.time.push_back(tp.getTime());
+            out.pdg.push_back(tp.getPdg());
+            out.nStates.push_back(nStates);
+            out.nMeasurements.push_back(nMeasurements);
+            out.nOutliers.push_back(nOutliers);
+            out.nHoles.push_back(nHoles);
+            out.nSharedHits.push_back(nSharedHits);
+            out.assoc_mcIndex.push_back(assocMc);
+            out.assoc_weight.push_back(assocW);
+
+            if (std::isfinite(deltaP) && std::abs(deltaP) < bestAbsDeltaP) {
+                bestAbsDeltaP = std::abs(deltaP);
+                out.bestIndex = currentTrackIndex;
+                out.bestP = p;
+                out.bestPT = pT;
+                out.bestDeltaP = deltaP;
+                out.bestDeltaPT = deltaPT;
+                out.bestTheta = theta;
+                out.bestPhi = phi;
+                out.bestNStates = nStates;
+                out.bestNMeasurements = nMeasurements;
+                out.bestNOutliers = nOutliers;
+                out.bestNHoles = nHoles;
+                out.bestNSharedHits = nSharedHits;
+                out.bestChi2 = chi2;
+                out.bestNdf = ndf;
+                out.bestAssocMcIndex = assocMc;
+                out.bestAssocWeight = assocW;
+            }
+        }
+        out.hasTrack = out.p.empty() ? 0 : 1;
+
+        auto actsGeoProvider = m_actsGeoProvider ? m_actsGeoProvider
+                                                 : (m_actsGeoSvc ? m_actsGeoSvc->actsGeoProvider() : nullptr);
+        const auto* actsGeoCtx = actsGeoProvider ? &actsGeoProvider->getActsGeometryContext() : nullptr;
+        if (actsTracks.empty() || actsTracks.front() == nullptr ||
+            actsStates.empty() || actsStates.front() == nullptr ||
+            actsGeoCtx == nullptr) {
+            return;
+        }
         Acts::TrackContainer<Acts::ConstVectorTrackContainer,
                              Acts::ConstVectorMultiTrajectory,
                              Acts::detail::ConstRefHolder>
-            trackContainer(*actsTracks.front(), *actsTrackStates.front());
+            trackContainer(*actsTracks.front(), *actsStates.front());
         const auto nActsTracks = static_cast<int>(trackContainer.size());
         for (int actsTrackIndex = 0; actsTrackIndex < nActsTracks; ++actsTrackIndex) {
             const auto track = trackContainer.getTrack(actsTrackIndex);
@@ -910,10 +1014,6 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                     globalZ = global.z();
                 }
 
-                // Exact sensor from the inverted ACTS surface map; fall back to the
-                // nearest-sensor scan for surfaces we couldn't map (e.g. older
-                // geometries). The exact path matters in the 1 mm sensor-overlap
-                // regions, where proximity can pick the neighboring module.
                 const SensorRef* sensorRef = nullptr;
                 const auto surfIt =
                     m_surfaceToSensorIdx.find(state.referenceSurface().geometryId().value());
@@ -927,85 +1027,175 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                                         sensorRef->detElement)
                     : PixelSnap{};
 
-                trk_state_track_index.push_back(actsTrackIndex);
-                trk_state_index.push_back(stateIndex++);
-                trk_state_acts_index.push_back(static_cast<int>(state.index()));
-                trk_state_type.push_back(typeMask);
-                trk_state_surface.push_back(state.referenceSurface().geometryId().value());
-                trk_state_loc0.push_back(loc0);
-                trk_state_loc1.push_back(loc1);
-                trk_x_on_plane.push_back(globalX);
-                trk_y_on_plane.push_back(globalY);
-                trk_z_on_plane.push_back(globalZ);
-                trk_aclgad_xPix.push_back(trackPixel.x);
-                trk_aclgad_yPix.push_back(trackPixel.y);
-                trk_aclgad_zPix.push_back(trackPixel.z);
-                trk_aclgad_dx.push_back(trackPixel.dx);
-                trk_aclgad_dy.push_back(trackPixel.dy);
-                trk_aclgad_dz.push_back(trackPixel.dz);
-                trk_aclgad_pixX.push_back(trackPixel.pixX);
-                trk_aclgad_pixY.push_back(trackPixel.pixY);
-                trk_aclgad_plane.push_back(sensorRef ? sensorRef->plane : -1);
-                trk_aclgad_module.push_back(sensorRef ? sensorRef->module : -1);
-                trk_aclgad_side.push_back(sensorRef ? sensorRef->side : -1);
-                trk_aclgad_sensor.push_back(sensorRef ? sensorRef->sensor : -1);
-                trk_aclgad_cellID.push_back(trackPixel.cellID);
-                trk_state_theta.push_back(stateTheta);
-                trk_state_phi.push_back(statePhi);
-                trk_state_qOverP.push_back(stateQOverP);
-                trk_state_time.push_back(stateTime);
-                // trk_* rows are filled in trajectory order, which matches the ACTS
-                // track container order. Sentinel is 0 (PDG "unknown"), not -1,
-                // since -1 is a valid PDG code (anti-down).
-                trk_state_pdg.push_back(
-                    (actsTrackIndex >= 0 && static_cast<std::size_t>(actsTrackIndex) < trk_pdg.size())
-                        ? trk_pdg[actsTrackIndex]
+                out.state_track_index.push_back(actsTrackIndex);
+                out.state_index.push_back(stateIndex++);
+                out.state_acts_index.push_back(static_cast<int>(state.index()));
+                out.state_type.push_back(typeMask);
+                out.state_surface.push_back(state.referenceSurface().geometryId().value());
+                out.state_loc0.push_back(loc0);
+                out.state_loc1.push_back(loc1);
+                out.x_on_plane.push_back(globalX);
+                out.y_on_plane.push_back(globalY);
+                out.z_on_plane.push_back(globalZ);
+                out.aclgad_xPix.push_back(trackPixel.x);
+                out.aclgad_yPix.push_back(trackPixel.y);
+                out.aclgad_zPix.push_back(trackPixel.z);
+                out.aclgad_dx.push_back(trackPixel.dx);
+                out.aclgad_dy.push_back(trackPixel.dy);
+                out.aclgad_dz.push_back(trackPixel.dz);
+                out.aclgad_pixX.push_back(trackPixel.pixX);
+                out.aclgad_pixY.push_back(trackPixel.pixY);
+                out.aclgad_plane.push_back(sensorRef ? sensorRef->plane : -1);
+                out.aclgad_station.push_back(sensorRef ? stationFromLayer(sensorRef->plane) : -1);
+                out.aclgad_module.push_back(sensorRef ? sensorRef->module : -1);
+                out.aclgad_side.push_back(sensorRef ? sensorRef->side : -1);
+                out.aclgad_sensor.push_back(sensorRef ? sensorRef->sensor : -1);
+                out.aclgad_cellID.push_back(trackPixel.cellID);
+                out.state_theta.push_back(stateTheta);
+                out.state_phi.push_back(statePhi);
+                out.state_qOverP.push_back(stateQOverP);
+                out.state_time.push_back(stateTime);
+                out.state_pdg.push_back(
+                    (actsTrackIndex >= 0 && static_cast<std::size_t>(actsTrackIndex) < out.pdg.size())
+                        ? out.pdg[static_cast<std::size_t>(actsTrackIndex)]
                         : 0);
             }
         }
-    }
+    };
 
-    // Generator-status convention (HepMC/Pythia8): 1 = stable final-state, 4 = beam.
-    for (const auto* part : mcparticles) {
-        const auto p = part->getMomentum();
-        const int  pdg    = part->getPDG();
-        const int  status = part->getGeneratorStatus();
-        const double pmag = std::sqrt(p.x*p.x + p.y*p.y + p.z*p.z);
-        const double pT = std::hypot(p.x, p.y);
-
-        if (status == 4 &&
-            (pdg == 22 || pdg == 11 || pdg == -11 || pdg == 2212)) {
-            beam_px .push_back(p.x);
-            beam_py .push_back(p.y);
-            beam_pz .push_back(p.z);
-            beam_p  .push_back(pmag);
-            beam_pT .push_back(pT);
-            beam_pdg.push_back(pdg);
-        }
-        if (pdg == 2212 && status == 4) {
-            m_genPpx.push_back(p.x);
-            m_genPpy.push_back(p.y);
-            m_genPpz.push_back(p.z);
-            m_genPp .push_back(pmag);
-            m_genPpT.push_back(pT);
-        }
-        if (pdg == 2212 && status == 1) {
-            m_genBeamPPx.push_back(p.x);
-            m_genBeamPPy.push_back(p.y);
-            m_genBeamPPz.push_back(p.z);
-            m_genBeamPP .push_back(pmag);
-            m_genBeamPPT.push_back(pT);
-        }
-        if (pdg == 11 && status == 1) {
-            m_genBeamPx.push_back(p.x);
-            m_genBeamPy.push_back(p.y);
-            m_genBeamPz.push_back(p.z);
-            m_genBeamP .push_back(pmag);
-            m_genBeamPT.push_back(pT);
-        }
-    }
+    fillChain(m_ts, tsTrajectories, tsTracks, tsEdmTracks, tsAssocs, tsActsTracks, tsActsTrackStates);
+    fillChain(m_ckf, ckfTrajectories, ckfTracks, ckfEdmTracks, ckfAssocs, ckfActsTracks, ckfActsTrackStates);
 
     m_tree->Fill();
+}
+
+void B0Trackers::TrackChain::clear(double nan) {
+    p.clear(); pT.clear(); delta_p.clear(); delta_pT.clear();
+    px.clear(); py.clear(); pz.clear();
+    theta.clear(); phi.clear();
+    qOverP.clear(); time.clear();
+    loc0.clear(); loc1.clear();
+    sigma_loc0.clear(); sigma_loc1.clear(); sigma_phi.clear();
+    sigma_theta.clear(); sigma_qOverP.clear(); sigma_time.clear();
+    chi2.clear(); ndf.clear();
+    index.clear(); charge.clear(); type.clear(); pdg.clear(); surface.clear();
+    nStates.clear(); nMeasurements.clear(); nOutliers.clear(); nHoles.clear(); nSharedHits.clear();
+    assoc_mcIndex.clear(); assoc_weight.clear();
+    state_track_index.clear(); state_index.clear(); state_acts_index.clear();
+    state_type.clear(); state_pdg.clear();
+    state_surface.clear();
+    state_loc0.clear(); state_loc1.clear();
+    x_on_plane.clear(); y_on_plane.clear(); z_on_plane.clear();
+    aclgad_xPix.clear(); aclgad_yPix.clear(); aclgad_zPix.clear();
+    aclgad_dx.clear(); aclgad_dy.clear(); aclgad_dz.clear();
+    aclgad_pixX.clear(); aclgad_pixY.clear();
+    aclgad_plane.clear(); aclgad_module.clear(); aclgad_side.clear();
+    aclgad_sensor.clear(); aclgad_station.clear();
+    aclgad_cellID.clear();
+    state_theta.clear(); state_phi.clear(); state_qOverP.clear(); state_time.clear();
+
+    bestIndex = -1;
+    bestNStates = -1;
+    bestNMeasurements = -1;
+    bestNOutliers = -1;
+    bestNHoles = -1;
+    bestNSharedHits = -1;
+    bestNdf = -1;
+    bestAssocMcIndex = -1;
+    bestP = nan;
+    bestPT = nan;
+    bestDeltaP = nan;
+    bestDeltaPT = nan;
+    bestTheta = nan;
+    bestPhi = nan;
+    bestChi2 = nan;
+    bestAssocWeight = nan;
+    hasTrack = 0;
+}
+
+void B0Trackers::bindTrackChain(const std::string& trkPrefix, const std::string& bestPrefix, TrackChain& c) {
+    auto br = [this](const std::string& name, auto* ptr) {
+        m_tree->Branch(name.c_str(), ptr);
+    };
+    br(trkPrefix + "p", &c.p);
+    br(trkPrefix + "pT", &c.pT);
+    br(trkPrefix + "delta_p", &c.delta_p);
+    br(trkPrefix + "delta_pT", &c.delta_pT);
+    br(trkPrefix + "theta", &c.theta);   // lab polar angle, not beam-frame scatter
+    br(trkPrefix + "phi", &c.phi);
+    br(trkPrefix + "px", &c.px);
+    br(trkPrefix + "py", &c.py);
+    br(trkPrefix + "pz", &c.pz);
+    br(trkPrefix + "qOverP", &c.qOverP);
+    br(trkPrefix + "loc0", &c.loc0);
+    br(trkPrefix + "loc1", &c.loc1);
+    br(trkPrefix + "sigma_loc0", &c.sigma_loc0);
+    br(trkPrefix + "sigma_loc1", &c.sigma_loc1);
+    br(trkPrefix + "sigma_phi", &c.sigma_phi);
+    br(trkPrefix + "sigma_theta", &c.sigma_theta);
+    br(trkPrefix + "sigma_qOverP", &c.sigma_qOverP);
+    br(trkPrefix + "sigma_time", &c.sigma_time);
+    br(trkPrefix + "chi2", &c.chi2);
+    br(trkPrefix + "ndf", &c.ndf);
+    br(trkPrefix + "charge", &c.charge);
+    br(trkPrefix + "index", &c.index);
+    br(trkPrefix + "type", &c.type);
+    br(trkPrefix + "surface", &c.surface);
+    br(trkPrefix + "time", &c.time);
+    br(trkPrefix + "pdg", &c.pdg);
+    br(trkPrefix + "nStates", &c.nStates);
+    br(trkPrefix + "nMeasurements", &c.nMeasurements);
+    br(trkPrefix + "nOutliers", &c.nOutliers);
+    br(trkPrefix + "nHoles", &c.nHoles);
+    br(trkPrefix + "nSharedHits", &c.nSharedHits);
+    br(trkPrefix + "assoc_mcIndex", &c.assoc_mcIndex);
+    br(trkPrefix + "assoc_weight", &c.assoc_weight);
+    br(trkPrefix + "state_track_index", &c.state_track_index);
+    br(trkPrefix + "state_index", &c.state_index);
+    br(trkPrefix + "state_acts_index", &c.state_acts_index);
+    br(trkPrefix + "state_type", &c.state_type);
+    br(trkPrefix + "state_surface", &c.state_surface);
+    br(trkPrefix + "state_loc0", &c.state_loc0);
+    br(trkPrefix + "state_loc1", &c.state_loc1);
+    br(trkPrefix + "x_on_plane", &c.x_on_plane);
+    br(trkPrefix + "y_on_plane", &c.y_on_plane);
+    br(trkPrefix + "z_on_plane", &c.z_on_plane);
+    br(trkPrefix + "aclgad_xPix", &c.aclgad_xPix);
+    br(trkPrefix + "aclgad_yPix", &c.aclgad_yPix);
+    br(trkPrefix + "aclgad_zPix", &c.aclgad_zPix);
+    br(trkPrefix + "aclgad_dx", &c.aclgad_dx);
+    br(trkPrefix + "aclgad_dy", &c.aclgad_dy);
+    br(trkPrefix + "aclgad_dz", &c.aclgad_dz);
+    br(trkPrefix + "aclgad_pixX", &c.aclgad_pixX);
+    br(trkPrefix + "aclgad_pixY", &c.aclgad_pixY);
+    br(trkPrefix + "aclgad_plane", &c.aclgad_plane);
+    br(trkPrefix + "aclgad_station", &c.aclgad_station);
+    br(trkPrefix + "aclgad_module", &c.aclgad_module);
+    br(trkPrefix + "aclgad_side", &c.aclgad_side);
+    br(trkPrefix + "aclgad_sensor", &c.aclgad_sensor);
+    br(trkPrefix + "aclgad_cellID", &c.aclgad_cellID);
+    br(trkPrefix + "state_theta", &c.state_theta);
+    br(trkPrefix + "state_phi", &c.state_phi);
+    br(trkPrefix + "state_qOverP", &c.state_qOverP);
+    br(trkPrefix + "state_time", &c.state_time);
+    br(trkPrefix + "state_pdg", &c.state_pdg);
+    br(trkPrefix + "has_track", &c.hasTrack);
+    br(bestPrefix + "index", &c.bestIndex);
+    br(bestPrefix + "p", &c.bestP);
+    br(bestPrefix + "pT", &c.bestPT);
+    br(bestPrefix + "delta_p", &c.bestDeltaP);
+    br(bestPrefix + "delta_pT", &c.bestDeltaPT);
+    br(bestPrefix + "theta", &c.bestTheta);
+    br(bestPrefix + "phi", &c.bestPhi);
+    br(bestPrefix + "nStates", &c.bestNStates);
+    br(bestPrefix + "nMeasurements", &c.bestNMeasurements);
+    br(bestPrefix + "nOutliers", &c.bestNOutliers);
+    br(bestPrefix + "nHoles", &c.bestNHoles);
+    br(bestPrefix + "nSharedHits", &c.bestNSharedHits);
+    br(bestPrefix + "chi2", &c.bestChi2);
+    br(bestPrefix + "ndf", &c.bestNdf);
+    br(bestPrefix + "assoc_mcIndex", &c.bestAssocMcIndex);
+    br(bestPrefix + "assoc_weight", &c.bestAssocWeight);
 }
 
 void B0Trackers::Finish() {
