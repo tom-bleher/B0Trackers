@@ -10,6 +10,7 @@ set(CMAKE_CXX_STANDARD ${EICrecon_CXX_STANDARD})
 set(B0Trackers_PLUGIN_SOURCES
     B0Trackers.cc
     B0Trackers.h
+    B0TrackersHelpers.h
 )
 
 # Build the shared plugin
@@ -28,3 +29,8 @@ set_target_properties(B0Trackers_plugin
 # Install location
 install(TARGETS B0Trackers_plugin
         DESTINATION ${USER_PLUGIN_OUTPUT_DIRECTORY})
+
+enable_testing()
+add_executable(B0TrackersHelpers_test tests/test_helpers.cc)
+target_include_directories(B0TrackersHelpers_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME B0TrackersHelpers COMMAND B0TrackersHelpers_test)
