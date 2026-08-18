@@ -213,11 +213,15 @@ private:
     std::vector<double> vm_seed_loc0, vm_seed_loc1;
     std::vector<double> vm_seed_sigma_qOverP, vm_seed_sigma_theta, vm_seed_sigma_phi;
     std::vector<int>    vm_seed_nHits, vm_seed_charge, vm_seed_momentum_resolved, vm_seed_became_track;
+    std::vector<int>    vm_seed_made_unfiltered_track, vm_seed_survived_ambiguity;
+    std::vector<int>    vm_seed_n_unfiltered_tracks, vm_seed_n_filtered_tracks;
     std::vector<double> vm_truth_seed_quality, vm_truth_seed_p, vm_truth_seed_qOverP;
     std::vector<double> vm_truth_seed_theta, vm_truth_seed_phi, vm_truth_seed_loc0, vm_truth_seed_loc1;
     std::vector<double> vm_truth_seed_sigma_qOverP, vm_truth_seed_sigma_theta, vm_truth_seed_sigma_phi;
     std::vector<int>    vm_truth_seed_nHits, vm_truth_seed_charge, vm_truth_seed_momentum_resolved;
     std::vector<int>    vm_truth_seed_became_track;
+    std::vector<int>    vm_truth_seed_made_unfiltered_track, vm_truth_seed_survived_ambiguity;
+    std::vector<int>    vm_truth_seed_n_unfiltered_tracks, vm_truth_seed_n_filtered_tracks;
 
     TrackChain m_ts;
     TrackChain m_ckf;

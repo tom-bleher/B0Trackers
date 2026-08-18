@@ -419,6 +419,10 @@ void B0Trackers::Init() {
     m_tree->Branch("seed_charge", &vm_seed_charge);
     m_tree->Branch("seed_momentum_resolved", &vm_seed_momentum_resolved);
     m_tree->Branch("seed_became_track", &vm_seed_became_track);
+    m_tree->Branch("seed_made_unfiltered_track", &vm_seed_made_unfiltered_track);
+    m_tree->Branch("seed_survived_ambiguity", &vm_seed_survived_ambiguity);
+    m_tree->Branch("seed_n_unfiltered_tracks", &vm_seed_n_unfiltered_tracks);
+    m_tree->Branch("seed_n_filtered_tracks", &vm_seed_n_filtered_tracks);
     m_tree->Branch("truth_seed_quality", &vm_truth_seed_quality);
     m_tree->Branch("truth_seed_p", &vm_truth_seed_p);
     m_tree->Branch("truth_seed_qOverP", &vm_truth_seed_qOverP);
@@ -433,6 +437,10 @@ void B0Trackers::Init() {
     m_tree->Branch("truth_seed_charge", &vm_truth_seed_charge);
     m_tree->Branch("truth_seed_momentum_resolved", &vm_truth_seed_momentum_resolved);
     m_tree->Branch("truth_seed_became_track", &vm_truth_seed_became_track);
+    m_tree->Branch("truth_seed_made_unfiltered_track", &vm_truth_seed_made_unfiltered_track);
+    m_tree->Branch("truth_seed_survived_ambiguity", &vm_truth_seed_survived_ambiguity);
+    m_tree->Branch("truth_seed_n_unfiltered_tracks", &vm_truth_seed_n_unfiltered_tracks);
+    m_tree->Branch("truth_seed_n_filtered_tracks", &vm_truth_seed_n_filtered_tracks);
 
     m_tree->Branch("n_simhits", &m_nSimHits);
     m_tree->Branch("n_rawhits", &m_nRawHits);
@@ -753,12 +761,16 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     vm_seed_sigma_qOverP.clear(); vm_seed_sigma_theta.clear(); vm_seed_sigma_phi.clear();
     vm_seed_nHits.clear(); vm_seed_charge.clear();
     vm_seed_momentum_resolved.clear(); vm_seed_became_track.clear();
+    vm_seed_made_unfiltered_track.clear(); vm_seed_survived_ambiguity.clear();
+    vm_seed_n_unfiltered_tracks.clear(); vm_seed_n_filtered_tracks.clear();
     vm_truth_seed_quality.clear(); vm_truth_seed_p.clear(); vm_truth_seed_qOverP.clear();
     vm_truth_seed_theta.clear(); vm_truth_seed_phi.clear();
     vm_truth_seed_loc0.clear(); vm_truth_seed_loc1.clear();
     vm_truth_seed_sigma_qOverP.clear(); vm_truth_seed_sigma_theta.clear(); vm_truth_seed_sigma_phi.clear();
     vm_truth_seed_nHits.clear(); vm_truth_seed_charge.clear();
     vm_truth_seed_momentum_resolved.clear(); vm_truth_seed_became_track.clear();
+    vm_truth_seed_made_unfiltered_track.clear(); vm_truth_seed_survived_ambiguity.clear();
+    vm_truth_seed_n_unfiltered_tracks.clear(); vm_truth_seed_n_filtered_tracks.clear();
 
     const double nan = b0trk::quietNaN();
     m_ts.clear(nan);
@@ -1329,21 +1341,44 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         vm_rec_mixedCell.push_back(linkIt == simLinkByCell.end() ? -1 : (linkIt->second.nContribMc > 1 ? 1 : 0));
     }
 
-    const auto fillSeeds = [&](const auto& seeds, const auto& trajectories,
-                               auto& quality, auto& p, auto& qOverP, auto& theta, auto& phi,
-                               auto& loc0, auto& loc1, auto& sigQ, auto& sigTh, auto& sigPh,
-                               auto& nHits, auto& charge, auto& resolved, auto& became) {
-        std::unordered_set<int> usedSeedIndex;
+    // Seed survival is two distinct stages: the CKF either builds a trajectory
+    // from the seed or it does not, and the ambiguity solver then either keeps
+    // that trajectory or drops it. Counting only the filtered collection merges
+    // a CKF failure with an ambiguity rejection, which are different problems
+    // with different fixes.
+    const auto countSeedUse = [](const auto& trajectories,
+                                 std::unordered_map<int, int>& counts) {
         for (const auto* traj : trajectories) {
             if (traj == nullptr) continue;
             const auto seed = traj->getSeed();
             if (seed.isAvailable()) {
-                usedSeedIndex.insert(seed.id().index);
+                ++counts[seed.id().index];
             }
         }
+    };
+
+    const auto fillSeeds = [&](const auto& seeds, const auto& trajectories,
+                               const auto& trajectoriesUnfiltered, bool haveUnfiltered,
+                               auto& quality, auto& p, auto& qOverP, auto& theta, auto& phi,
+                               auto& loc0, auto& loc1, auto& sigQ, auto& sigTh, auto& sigPh,
+                               auto& nHits, auto& charge, auto& resolved, auto& became,
+                               auto& madeUnfiltered, auto& survivedAmbiguity,
+                               auto& nUnfiltered, auto& nFiltered) {
+        std::unordered_map<int, int> filteredCounts;
+        std::unordered_map<int, int> unfilteredCounts;
+        countSeedUse(trajectories, filteredCounts);
+        countSeedUse(trajectoriesUnfiltered, unfilteredCounts);
         for (std::size_t i = 0; i < seeds.size(); ++i) {
             const auto* seed = seeds[i];
             if (seed == nullptr) continue;
+            // Key on the PODIO ObjectID rather than the loop position: the two
+            // coincide for an unfiltered collection but the invariant is not
+            // guaranteed and must not be assumed.
+            const int seedIndex = seed->id().index;
+            const auto filteredIt   = filteredCounts.find(seedIndex);
+            const auto unfilteredIt = unfilteredCounts.find(seedIndex);
+            const int nFilt   = filteredIt == filteredCounts.end() ? 0 : filteredIt->second;
+            const int nUnfilt = unfilteredIt == unfilteredCounts.end() ? 0 : unfilteredIt->second;
             auto tp = seed->getParams();
             double qop = nan, th = nan, ph = nan, l0 = nan, l1 = nan;
             double sq = nan, st = nan, sp = nan;
@@ -1380,18 +1415,32 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             nHits.push_back(static_cast<int>(seed->hits_size()));
             charge.push_back(ch);
             resolved.push_back(momOk ? 1 : 0);
-            became.push_back(usedSeedIndex.count(static_cast<int>(i)) ? 1 : 0);
+            became.push_back(nFilt > 0 ? 1 : 0);
+            // -1 marks "unknowable": without the unfiltered collection the two
+            // stages cannot be separated, and reporting 0 would be a claim that
+            // the CKF failed.
+            madeUnfiltered.push_back(haveUnfiltered ? (nUnfilt > 0 ? 1 : 0) : -1);
+            survivedAmbiguity.push_back(
+                haveUnfiltered ? (nUnfilt > 0 ? (nFilt > 0 ? 1 : 0) : -1) : -1);
+            nUnfiltered.push_back(haveUnfiltered ? nUnfilt : -1);
+            nFiltered.push_back(nFilt);
         }
     };
-    fillSeeds(stubSeeds, ckfTrajectories, vm_seed_quality, vm_seed_p, vm_seed_qOverP,
+    fillSeeds(stubSeeds, ckfTrajectories, ckfTrajectoriesUnfiltered, hasCkfTrajectoriesUnfiltered,
+              vm_seed_quality, vm_seed_p, vm_seed_qOverP,
               vm_seed_theta, vm_seed_phi, vm_seed_loc0, vm_seed_loc1,
               vm_seed_sigma_qOverP, vm_seed_sigma_theta, vm_seed_sigma_phi,
-              vm_seed_nHits, vm_seed_charge, vm_seed_momentum_resolved, vm_seed_became_track);
-    fillSeeds(truthSeeds, tsTrajectories, vm_truth_seed_quality, vm_truth_seed_p, vm_truth_seed_qOverP,
+              vm_seed_nHits, vm_seed_charge, vm_seed_momentum_resolved, vm_seed_became_track,
+              vm_seed_made_unfiltered_track, vm_seed_survived_ambiguity,
+              vm_seed_n_unfiltered_tracks, vm_seed_n_filtered_tracks);
+    fillSeeds(truthSeeds, tsTrajectories, tsTrajectoriesUnfiltered, hasTsTrajectoriesUnfiltered,
+              vm_truth_seed_quality, vm_truth_seed_p, vm_truth_seed_qOverP,
               vm_truth_seed_theta, vm_truth_seed_phi, vm_truth_seed_loc0, vm_truth_seed_loc1,
               vm_truth_seed_sigma_qOverP, vm_truth_seed_sigma_theta, vm_truth_seed_sigma_phi,
               vm_truth_seed_nHits, vm_truth_seed_charge, vm_truth_seed_momentum_resolved,
-              vm_truth_seed_became_track);
+              vm_truth_seed_became_track,
+              vm_truth_seed_made_unfiltered_track, vm_truth_seed_survived_ambiguity,
+              vm_truth_seed_n_unfiltered_tracks, vm_truth_seed_n_filtered_tracks);
 
     auto fillChain = [&](TrackChain& out,
                          const auto& trajectories,
