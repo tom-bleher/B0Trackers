@@ -1,65 +1,111 @@
+// Checks must survive -DNDEBUG: a Release build silently compiles out C assert,
+// and a test that asserts nothing still reports success.
+
 #include "B0TrackersHelpers.h"
 
-#include <cassert>
 #include <cmath>
+#include <cstdlib>
 #include <iostream>
 #include <limits>
+#include <string>
+
+namespace {
+
+int g_failures = 0;
+
+bool g_quiet = false;
+
+void check(bool condition, const char* expr, const char* file, int line) {
+    if (!condition) {
+        ++g_failures;
+        if (!g_quiet) {
+            std::cerr << file << ":" << line << ": CHECK failed: " << expr << "\n";
+        }
+    }
+}
+
+bool closeTo(double a, double b, double tol = 1e-12) { return std::abs(a - b) <= tol; }
+
+} // namespace
+
+#define CHECK(expr) check(static_cast<bool>(expr), #expr, __FILE__, __LINE__)
 
 int main() {
     using namespace b0trk;
 
     {
         const auto [p, ok] = momentumFromQOverP(0.25);
-        assert(ok);
-        assert(std::abs(p - 4.0) < 1e-12);
+        CHECK(ok);
+        CHECK(closeTo(p, 4.0));
+    }
+    {
+        const auto [p, ok] = momentumFromQOverP(-0.25);
+        CHECK(ok);
+        CHECK(closeTo(p, 4.0));
     }
     {
         const auto [p, ok] = momentumFromQOverP(0.0);
-        assert(!ok);
-        assert(std::isnan(p));
+        CHECK(!ok);
+        CHECK(std::isnan(p));
     }
     {
         const auto [p, ok] = momentumFromQOverP(std::numeric_limits<double>::quiet_NaN());
-        assert(!ok);
-        assert(std::isnan(p));
+        CHECK(!ok);
+        CHECK(std::isnan(p));
     }
 
-    assert(stationFromLayerId(1, true) == 1);
-    assert(stationFromLayerId(2, true) == 1);
-    assert(stationFromLayerId(3, true) == 2);
-    assert(stationFromLayerId(8, true) == 4);
-    assert(stationFromLayerId(1, false) == 1);
-    assert(stationFromLayerId(4, false) == 4);
-    assert(stationFromLayerId(0, true) == -1);
+    CHECK(stationFromLayerId(1, true) == 1);
+    CHECK(stationFromLayerId(2, true) == 1);
+    CHECK(stationFromLayerId(3, true) == 2);
+    CHECK(stationFromLayerId(8, true) == 4);
+    CHECK(stationFromLayerId(1, false) == 1);
+    CHECK(stationFromLayerId(4, false) == 4);
+    CHECK(stationFromLayerId(0, true) == -1);
 
     {
         const auto [st, side] = parseLayerName("B0Tracker_layer1_front_P");
-        assert(st == 1);
-        assert(side == 1);
+        CHECK(st == 1);
+        CHECK(side == 1);
     }
     {
         const auto [st, side] = parseLayerName("B0Tracker_layer2_back_P");
-        assert(st == 2);
-        assert(side == 0);
+        CHECK(st == 2);
+        CHECK(side == 0);
     }
     {
         const auto [st, side] = parseLayerName("B0Tracker_layer3_P");
-        assert(st == 3);
-        assert(side == -1);
+        CHECK(st == 3);
+        CHECK(side == -1);
     }
     {
         const auto [st, side] = parseLayerName("not_a_layer");
-        assert(st == -1);
-        assert(side == -1);
+        CHECK(st == -1);
+        CHECK(side == -1);
     }
 
     {
         const double wrapped = wrapPi(3.2);
-        assert(wrapped < 3.14159265358979323846 && wrapped > -3.14159265358979323846);
-        assert(std::abs(std::cos(wrapped) - std::cos(3.2)) < 1e-12);
+        CHECK(wrapped < 3.14159265358979323846 && wrapped > -3.14159265358979323846);
+        CHECK(closeTo(std::cos(wrapped), std::cos(3.2)));
     }
-    assert(std::abs(wrapPi(0.1) - 0.1) < 1e-12);
+    CHECK(closeTo(wrapPi(0.1), 0.1));
 
+    // The test harness itself must be able to fail; a check that never trips is
+    // indistinguishable from one that was compiled away.
+    {
+        const int before = g_failures;
+        g_quiet            = true;
+        CHECK(1 == 2);
+        g_quiet                 = false;
+        const bool harnessWorks = (g_failures == before + 1);
+        g_failures              = before;
+        CHECK(harnessWorks);
+    }
+
+    if (g_failures != 0) {
+        std::cerr << "B0TrackersHelpers tests FAILED (" << g_failures << " check(s))\n";
+        return EXIT_FAILURE;
+    }
     std::cout << "B0TrackersHelpers tests passed\n";
-    return 0;
+    return EXIT_SUCCESS;
 }

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.20)
 project(B0Trackers)
 
 find_package(EICrecon REQUIRED)
@@ -19,18 +19,24 @@ target_link_libraries(B0Trackers_plugin EICrecon::rootfile_plugin)
 target_link_libraries(B0Trackers_plugin ${JANA_LIB} ${ROOT_LIBRARIES} spdlog::spdlog)
 
 # Set output name and format
+# JANA loads plugins by bare name, so no "lib" prefix; the suffix follows the
+# platform rather than being pinned to .so.
 set_target_properties(B0Trackers_plugin
     PROPERTIES
         PREFIX ""
         OUTPUT_NAME "B0Trackers"
-        SUFFIX ".so"
+        SUFFIX "${CMAKE_SHARED_LIBRARY_SUFFIX}"
 )
 
 # Install location
 install(TARGETS B0Trackers_plugin
         DESTINATION ${USER_PLUGIN_OUTPUT_DIRECTORY})
 
-enable_testing()
-add_executable(B0TrackersHelpers_test tests/test_helpers.cc)
-target_include_directories(B0TrackersHelpers_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_test(NAME B0TrackersHelpers COMMAND B0TrackersHelpers_test)
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(B0TrackersHelpers_test tests/test_helpers.cc)
+    target_include_directories(B0TrackersHelpers_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    # The checks report failures explicitly rather than through assert(), so they
+    # stay live under -DNDEBUG.
+    add_test(NAME B0TrackersHelpers COMMAND B0TrackersHelpers_test)
+endif()
