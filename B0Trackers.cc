@@ -312,6 +312,7 @@ void B0Trackers::Init() {
     m_tree->Branch("sel_primary_p",  &m_selPrimaryP);
     m_tree->Branch("sel_primary_pT", &m_selPrimaryPT);
     m_tree->Branch("sel_primary_thscat_mrad", &m_selPrimaryThscatMrad);
+    m_tree->Branch("sel_primary_charge", &m_selPrimaryCharge);
     m_tree->Branch("n_stations_primary", &m_nStationsPrimary);
 
     bindTrackChain("trk_", m_ts);
@@ -770,11 +771,13 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     m_selPrimaryP = nan;
     m_selPrimaryPT = nan;
     m_selPrimaryThscatMrad = nan;
+    m_selPrimaryCharge = nan;
     m_nStationsPrimary = 0;
 
     beam_px.clear();  beam_py.clear();  beam_pz.clear(); beam_p.clear(); beam_pT.clear();
     beam_pdg.clear();
     m_primaryPx.clear(); m_primaryPy.clear(); m_primaryPz.clear(); m_primaryP.clear(); m_primaryPT.clear();
+    m_primaryCharge.clear();
     m_primaryPdgOut.clear(); m_primaryStatusOut.clear(); m_primaryMcIndex.clear();
     m_primaryMcCollectionID.clear();
     m_genPpx.clear();    m_genPpy.clear();    m_genPpz.clear();    m_genPp.clear();    m_genPpT.clear();
@@ -979,6 +982,10 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         m_primaryPz.push_back(p.z);
         m_primaryP.push_back(pmag);
         m_primaryPT.push_back(pT);
+        // Charge comes from the simulation record, not from a hand-maintained
+        // PDG table: primary_pdg is configurable and a negative species would
+        // otherwise get a silently wrong-signed q/p pull.
+        m_primaryCharge.push_back(part->getCharge());
     }
 
     const auto isSelectedPrimary = [&primaryIds](std::uint32_t collectionID, int index) -> int {
@@ -1000,6 +1007,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         m_selPrimaryPz = m_primaryPz[primaryRef];
         m_selPrimaryP = m_primaryP[primaryRef];
         m_selPrimaryPT = m_primaryPT[primaryRef];
+        m_selPrimaryCharge = m_primaryCharge[primaryRef];
     }
     const auto isSelPrimary = [this](std::uint32_t collectionID, int index) -> int {
         return (m_selPrimaryMcIndex >= 0 &&
@@ -1413,8 +1421,9 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
 
         const double primaryP = m_selPrimaryP;
         const double primaryPT = m_selPrimaryPT;
-        const double truthQOverP = (std::isfinite(primaryP) && primaryP > 0.0)
-            ? (1.0 / primaryP) : nan;
+        const double truthQOverP =
+            (std::isfinite(primaryP) && primaryP > 0.0 && std::isfinite(m_selPrimaryCharge))
+                ? (m_selPrimaryCharge / primaryP) : nan;
         const double truthTheta = (std::isfinite(primaryP) && primaryP > 0.0)
             ? std::acos(std::clamp(m_selPrimaryPz / primaryP, -1.0, 1.0)) : nan;
         const double truthPhi = (std::isfinite(m_selPrimaryPx) && std::isfinite(m_selPrimaryPy))

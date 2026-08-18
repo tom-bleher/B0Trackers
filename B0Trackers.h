@@ -226,6 +226,7 @@ private:
     std::vector<double> beam_px, beam_py, beam_pz, beam_p, beam_pT;
     std::vector<int>    beam_pdg;
     std::vector<double> m_primaryPx, m_primaryPy, m_primaryPz, m_primaryP, m_primaryPT;
+    std::vector<double> m_primaryCharge;
     std::vector<int>    m_primaryPdgOut, m_primaryStatusOut, m_primaryMcIndex;
     std::vector<std::uint32_t> m_primaryMcCollectionID;
     std::vector<double> m_genPpx, m_genPpy, m_genPpz, m_genPp, m_genPpT;
@@ -240,6 +241,7 @@ private:
     double m_selPrimaryP = 0.0;
     double m_selPrimaryPT = 0.0;
     double m_selPrimaryThscatMrad = 0.0;
+    double m_selPrimaryCharge = 0.0;
     int m_nStationsPrimary = 0; // selected primary only
 
     int m_nSimHits = 0;
