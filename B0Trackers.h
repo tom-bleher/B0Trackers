@@ -164,7 +164,7 @@ private:
     std::vector<int>    vm_pdg, vm_status;
     std::vector<int>    vm_isPrimary;              // alias: matches primary_pdg/status
     std::vector<int>    vm_isSelPrimary;           // selected (highest-p) primary only
-    std::vector<int>    vm_survivedDigi;
+    std::vector<int>    vm_cellFired;   // cell produced a RawHit (not: this SimHit did)
     std::vector<double> vm_px, vm_py, vm_pz, vm_p, vm_pT;
     std::vector<std::uint64_t> vm_cellID;
     std::vector<int>    vm_mcIndex;
@@ -195,6 +195,8 @@ private:
     std::vector<int>    vm_raw_plane, vm_raw_station, vm_raw_module, vm_raw_side, vm_raw_sensor;
     std::vector<int>    vm_raw_mcIndex;
     std::vector<std::uint32_t> vm_raw_mcCollectionID;
+    std::vector<int>    vm_raw_nContribSim, vm_raw_nContribMc, vm_raw_mixedCell;
+    std::vector<double> vm_raw_dominantFrac, vm_raw_totalEdep;
 
     std::vector<double> vm_rec_x, vm_rec_y, vm_rec_z;
     std::vector<double> vm_rec_covxx, vm_rec_covyy, vm_rec_covzz;
@@ -204,6 +206,8 @@ private:
     std::vector<int>    vm_rec_pixX, vm_rec_pixY, vm_rec_pixZ;
     std::vector<int>    vm_rec_mcIndex;
     std::vector<std::uint32_t> vm_rec_mcCollectionID;
+    std::vector<int>    vm_rec_nContribSim, vm_rec_nContribMc, vm_rec_mixedCell;
+    std::vector<double> vm_rec_dominantFrac, vm_rec_totalEdep;
 
     // Seeds.
     std::vector<double> vm_seed_quality, vm_seed_p, vm_seed_qOverP, vm_seed_theta, vm_seed_phi;

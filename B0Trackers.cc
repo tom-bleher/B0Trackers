@@ -236,7 +236,7 @@ void B0Trackers::Init() {
     m_tree->Branch("isPrimary", &vm_isPrimary);
     m_tree->Branch("matchesPrimarySelector", &vm_isPrimary);
     m_tree->Branch("isSelPrimary", &vm_isSelPrimary);
-    m_tree->Branch("survivedDigi", &vm_survivedDigi);
+    m_tree->Branch("cell_fired", &vm_cellFired);
     m_tree->Branch("xP",        &vm_xP);
     m_tree->Branch("yP",        &vm_yP);
     m_tree->Branch("zP",        &vm_zP);
@@ -371,6 +371,11 @@ void B0Trackers::Init() {
     m_tree->Branch("raw_sensor", &vm_raw_sensor);
     m_tree->Branch("raw_mcIndex", &vm_raw_mcIndex);
     m_tree->Branch("raw_mcCollectionID", &vm_raw_mcCollectionID);
+    m_tree->Branch("raw_nContribSim", &vm_raw_nContribSim);
+    m_tree->Branch("raw_nContribMc", &vm_raw_nContribMc);
+    m_tree->Branch("raw_dominantFrac", &vm_raw_dominantFrac);
+    m_tree->Branch("raw_totalEdep", &vm_raw_totalEdep);
+    m_tree->Branch("raw_mixedCell", &vm_raw_mixedCell);
 
     m_tree->Branch("rec_x", &vm_rec_x);
     m_tree->Branch("rec_y", &vm_rec_y);
@@ -393,6 +398,11 @@ void B0Trackers::Init() {
     m_tree->Branch("rec_pixZ", &vm_rec_pixZ);
     m_tree->Branch("rec_mcIndex", &vm_rec_mcIndex);
     m_tree->Branch("rec_mcCollectionID", &vm_rec_mcCollectionID);
+    m_tree->Branch("rec_nContribSim", &vm_rec_nContribSim);
+    m_tree->Branch("rec_nContribMc", &vm_rec_nContribMc);
+    m_tree->Branch("rec_dominantFrac", &vm_rec_dominantFrac);
+    m_tree->Branch("rec_totalEdep", &vm_rec_totalEdep);
+    m_tree->Branch("rec_mixedCell", &vm_rec_mixedCell);
 
     m_tree->Branch("seed_quality", &vm_seed_quality);
     m_tree->Branch("seed_p", &vm_seed_p);
@@ -700,7 +710,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     vm_cellID.clear(); vm_mcIndex.clear(); vm_mcCollectionID.clear();
     vm_eDep.clear();  vm_time.clear();   vm_path.clear();
     vm_pdg.clear();   vm_status.clear();
-    vm_isPrimary.clear(); vm_isSelPrimary.clear(); vm_survivedDigi.clear();
+    vm_isPrimary.clear(); vm_isSelPrimary.clear(); vm_cellFired.clear();
     vm_px.clear();    vm_py.clear();    vm_pz.clear();   vm_p.clear();    vm_pT.clear();
 
     vm_xP.clear();      vm_yP.clear();      vm_zP.clear();      vm_pathP.clear();   vm_timeP.clear();
@@ -724,6 +734,8 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     vm_raw_plane.clear(); vm_raw_station.clear(); vm_raw_module.clear();
     vm_raw_side.clear(); vm_raw_sensor.clear();
     vm_raw_mcIndex.clear(); vm_raw_mcCollectionID.clear();
+    vm_raw_nContribSim.clear(); vm_raw_nContribMc.clear(); vm_raw_mixedCell.clear();
+    vm_raw_dominantFrac.clear(); vm_raw_totalEdep.clear();
     vm_rec_x.clear(); vm_rec_y.clear(); vm_rec_z.clear();
     vm_rec_covxx.clear(); vm_rec_covyy.clear(); vm_rec_covzz.clear();
     vm_rec_time.clear(); vm_rec_time_err.clear(); vm_rec_edep.clear(); vm_rec_edep_err.clear();
@@ -732,6 +744,8 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     vm_rec_side.clear(); vm_rec_sensor.clear();
     vm_rec_pixX.clear(); vm_rec_pixY.clear(); vm_rec_pixZ.clear();
     vm_rec_mcIndex.clear(); vm_rec_mcCollectionID.clear();
+    vm_rec_nContribSim.clear(); vm_rec_nContribMc.clear(); vm_rec_mixedCell.clear();
+    vm_rec_dominantFrac.clear(); vm_rec_totalEdep.clear();
 
     vm_seed_quality.clear(); vm_seed_p.clear(); vm_seed_qOverP.clear();
     vm_seed_theta.clear(); vm_seed_phi.clear(); vm_seed_loc0.clear(); vm_seed_loc1.clear();
@@ -898,27 +912,51 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         }
     }
 
+    // Truth attribution of a cell must rank particles by their *total*
+    // contribution, not by their largest single Geant4 step. Two 6 keV steps
+    // from one particle outweigh a single 10 keV step from another, and a
+    // largest-single-deposit rule gets that backwards. The dominant fraction is
+    // kept alongside the label so a mixed cell is visible rather than implied.
     struct SimLink {
         int mcIndex = -1;
         std::uint32_t mcCollectionID = 0;
-        double eDep = -1.0;
+        double eDep = 0.0;         // summed deposit of the dominant particle
+        double totalEDep = 0.0;    // summed deposit of the whole cell
+        int nContribSim = 0;
+        int nContribMc = 0;
     };
     std::unordered_map<std::uint64_t, SimLink> simLinkByCell;
-    for (const auto* assoc : rawAssocs) {
-        if (assoc == nullptr) continue;
-        const auto raw = assoc->getRawHit();
-        const auto sim = assoc->getSimHit();
-        if (!raw.isAvailable() || !sim.isAvailable()) continue;
-        const auto particle = sim.getParticle();
-        if (!particle.isAvailable()) continue;
-        const auto id = particle.id();
-        auto& link = simLinkByCell[raw.getCellID()];
-        if (sim.getEDep() > link.eDep) {
-            link.eDep = sim.getEDep();
-            link.mcIndex = id.index;
-            link.mcCollectionID = id.collectionID;
+    {
+        // (cellID, MC ObjectID) -> summed deposit.
+        std::map<std::pair<std::uint64_t, std::pair<std::uint32_t, int>>, double> cellParticleEDep;
+        for (const auto* assoc : rawAssocs) {
+            if (assoc == nullptr) continue;
+            const auto raw = assoc->getRawHit();
+            const auto sim = assoc->getSimHit();
+            if (!raw.isAvailable() || !sim.isAvailable()) continue;
+            const auto particle = sim.getParticle();
+            if (!particle.isAvailable()) continue;
+            const auto id  = particle.id();
+            const auto cid = raw.getCellID();
+            cellParticleEDep[{cid, {id.collectionID, id.index}}] += sim.getEDep();
+            auto& link = simLinkByCell[cid];
+            link.totalEDep += sim.getEDep();
+            ++link.nContribSim;
+        }
+        for (const auto& [key, summed] : cellParticleEDep) {
+            const auto cid = key.first;
+            auto& link     = simLinkByCell[cid];
+            ++link.nContribMc;
+            if (summed > link.eDep) {
+                link.eDep           = summed;
+                link.mcCollectionID = key.second.first;
+                link.mcIndex        = key.second.second;
+            }
         }
     }
+    const auto dominantFraction = [nan](const SimLink& link) {
+        return link.totalEDep > 0.0 ? link.eDep / link.totalEDep : nan;
+    };
 
     std::vector<std::pair<std::uint32_t, int>> primaryIds;
     for (const auto* part : mcparticles) {
@@ -1056,7 +1094,10 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         vm_status.push_back(mc.getGeneratorStatus());
         vm_isPrimary.push_back(primaryFlag);
         vm_isSelPrimary.push_back(selFlag);
-        vm_survivedDigi.push_back(rawCellIDs.count(cid) ? 1 : 0);
+        // Cell-level, not SimHit-level: the generic digitizer associates every
+        // SimHit sharing a fired cellID, including subthreshold ones, so this
+        // says the cell produced a RawHit -- not that this deposit did.
+        vm_cellFired.push_back(rawCellIDs.count(cid) ? 1 : 0);
 
         const auto key = std::make_tuple(id.collectionID, id.index, plane, side, module, sensor);
         const auto existing = penetrationIndex.find(key);
@@ -1237,6 +1278,11 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         vm_raw_sensor.push_back(sensor);
         vm_raw_mcIndex.push_back(linkIt == simLinkByCell.end() ? -1 : linkIt->second.mcIndex);
         vm_raw_mcCollectionID.push_back(linkIt == simLinkByCell.end() ? 0 : linkIt->second.mcCollectionID);
+        vm_raw_nContribSim.push_back(linkIt == simLinkByCell.end() ? 0 : linkIt->second.nContribSim);
+        vm_raw_nContribMc.push_back(linkIt == simLinkByCell.end() ? 0 : linkIt->second.nContribMc);
+        vm_raw_dominantFrac.push_back(linkIt == simLinkByCell.end() ? nan : dominantFraction(linkIt->second));
+        vm_raw_totalEdep.push_back(linkIt == simLinkByCell.end() ? nan : linkIt->second.totalEDep);
+        vm_raw_mixedCell.push_back(linkIt == simLinkByCell.end() ? -1 : (linkIt->second.nContribMc > 1 ? 1 : 0));
     }
 
     for (const auto* rec : recHits) {
@@ -1268,6 +1314,11 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         vm_rec_pixZ.push_back(getFieldOr(cid, "z", -1));
         vm_rec_mcIndex.push_back(linkIt == simLinkByCell.end() ? -1 : linkIt->second.mcIndex);
         vm_rec_mcCollectionID.push_back(linkIt == simLinkByCell.end() ? 0 : linkIt->second.mcCollectionID);
+        vm_rec_nContribSim.push_back(linkIt == simLinkByCell.end() ? 0 : linkIt->second.nContribSim);
+        vm_rec_nContribMc.push_back(linkIt == simLinkByCell.end() ? 0 : linkIt->second.nContribMc);
+        vm_rec_dominantFrac.push_back(linkIt == simLinkByCell.end() ? nan : dominantFraction(linkIt->second));
+        vm_rec_totalEdep.push_back(linkIt == simLinkByCell.end() ? nan : linkIt->second.totalEDep);
+        vm_rec_mixedCell.push_back(linkIt == simLinkByCell.end() ? -1 : (linkIt->second.nContribMc > 1 ? 1 : 0));
     }
 
     const auto fillSeeds = [&](const auto& seeds, const auto& trajectories,
