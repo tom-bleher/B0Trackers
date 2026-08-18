@@ -24,6 +24,7 @@
 #include <TGeoMatrix.h>
 #include <TTree.h>
 
+#include <Acts/ActsVersion.hpp>
 #include <Acts/Definitions/Algebra.hpp>
 #include <Acts/Definitions/TrackParametrization.hpp>
 #include <Acts/EventData/TrackContainer.hpp>
@@ -101,6 +102,51 @@ bool getOpt(const std::shared_ptr<const JEvent>& event, const char* name,
     if (event->GetFactory<T>(name, false) == nullptr) {
         return false;
     }
+    out = event->Get<T>(name);
+    return true;
+}
+
+// ACTS 45 replaced the TrackStateFlag enumerators with named accessors, so a
+// direct flags.test(Acts::TrackStateFlag::...) call stops compiling there.
+//
+// The mask below is built only from accessors that are pure single-bit tests.
+// isMeasurement() and isMaterial() are compound predicates in ACTS 45
+// (measurement-and-not-outlier, material-and-not-measurement) and using them
+// would silently change what this diagnostic column means between versions.
+// The >= 45 branch follows the documented ACTS 45 API; the image in use here
+// is ACTS 44.4.0, so only the < 45 branch is exercised by our own builds.
+enum StateTypeBit {
+    kStateMeasurement   = 1 << 0,
+    kStateParameter     = 1 << 1,
+    kStateOutlier       = 1 << 2,
+    kStateHole          = 1 << 3,
+    kStateMaterial      = 1 << 4,
+    kStateSharedHit     = 1 << 5,
+    kStateSplitHit      = 1 << 6,
+    kStateNoExpectedHit = 1 << 7,
+};
+
+template <typename FlagsT>
+int trackStateTypeMask(const FlagsT& flags) {
+#if Acts_VERSION_MAJOR >= 45
+    return (flags.hasMeasurement()   ? kStateMeasurement   : 0) |
+           (flags.hasParameters()    ? kStateParameter     : 0) |
+           (flags.isOutlier()        ? kStateOutlier       : 0) |
+           (flags.isHole()           ? kStateHole          : 0) |
+           (flags.hasMaterial()      ? kStateMaterial      : 0) |
+           (flags.isSharedHit()      ? kStateSharedHit     : 0) |
+           (flags.isSplitHit()       ? kStateSplitHit      : 0) |
+           (flags.hasNoExpectedHit() ? kStateNoExpectedHit : 0);
+#else
+    return (flags.test(Acts::TrackStateFlag::MeasurementFlag)   ? kStateMeasurement   : 0) |
+           (flags.test(Acts::TrackStateFlag::ParameterFlag)     ? kStateParameter     : 0) |
+           (flags.test(Acts::TrackStateFlag::OutlierFlag)       ? kStateOutlier       : 0) |
+           (flags.test(Acts::TrackStateFlag::HoleFlag)          ? kStateHole          : 0) |
+           (flags.test(Acts::TrackStateFlag::MaterialFlag)      ? kStateMaterial      : 0) |
+           (flags.test(Acts::TrackStateFlag::SharedHitFlag)     ? kStateSharedHit     : 0) |
+           (flags.test(Acts::TrackStateFlag::SplitHitFlag)      ? kStateSplitHit      : 0) |
+           (flags.test(Acts::TrackStateFlag::NoExpectedHitFlag) ? kStateNoExpectedHit : 0);
+#endif
 }
 
 bool decoderHasField(const dd4hep::DDSegmentation::BitFieldCoder* decoder, const char* field) {
@@ -1705,20 +1751,10 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                     stateTime = params[Acts::eBoundTime];
                 });
 
-                int typeMask = 0;
-                const auto flags = state.typeFlags();
-                if (flags.test(Acts::TrackStateFlag::MeasurementFlag)) typeMask |= (1 << 0);
-                if (flags.test(Acts::TrackStateFlag::ParameterFlag))   typeMask |= (1 << 1);
-                if (flags.test(Acts::TrackStateFlag::OutlierFlag))     typeMask |= (1 << 2);
-                if (flags.test(Acts::TrackStateFlag::HoleFlag))        typeMask |= (1 << 3);
-                if (flags.test(Acts::TrackStateFlag::MaterialFlag))    typeMask |= (1 << 4);
-                if (flags.test(Acts::TrackStateFlag::SharedHitFlag))   typeMask |= (1 << 5);
-                if (flags.test(Acts::TrackStateFlag::SplitHitFlag))    typeMask |= (1 << 6);
-                if (flags.test(Acts::TrackStateFlag::NoExpectedHitFlag)) typeMask |= (1 << 7);
+                const auto flags   = state.typeFlags();
+                const int typeMask = trackStateTypeMask(flags);
                 const bool physicsState =
-                    flags.test(Acts::TrackStateFlag::MeasurementFlag) ||
-                    flags.test(Acts::TrackStateFlag::OutlierFlag) ||
-                    flags.test(Acts::TrackStateFlag::HoleFlag);
+                    (typeMask & (kStateMeasurement | kStateOutlier | kStateHole)) != 0;
 
                 double globalX = nan;
                 double globalY = nan;
