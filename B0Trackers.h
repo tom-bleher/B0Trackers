@@ -114,7 +114,6 @@ private:
         std::vector<int>    assoc_mcIndex;
         std::vector<std::uint32_t> assoc_mcCollectionID;
         std::vector<double> assoc_weight;
-        std::vector<std::uint64_t> surface;
 
         std::vector<int>    state_track_index, state_index, state_acts_index, state_type, state_pdg;
         std::vector<int>    state_mapping_method;

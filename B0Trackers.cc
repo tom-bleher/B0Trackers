@@ -1558,7 +1558,6 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             out.charge.push_back(charge);
             out.index.push_back(currentTrackIndex);
             out.type.push_back(tp.getType());
-            out.surface.push_back(tp.getSurface());
             out.time.push_back(tp.getTime());
             out.pdg.push_back(pdg);
             out.nStates.push_back(nStates);
@@ -1827,7 +1826,7 @@ void B0Trackers::TrackChain::clear(double nan) {
     sigma_theta.clear(); sigma_qOverP.clear(); sigma_time.clear();
     pull_qOverP.clear(); pull_theta.clear(); pull_phi.clear();
     chi2.clear(); ndf.clear();
-    index.clear(); charge.clear(); type.clear(); pdg.clear(); surface.clear();
+    index.clear(); charge.clear(); type.clear(); pdg.clear();
     nStates.clear(); nMeasurements.clear(); nOutliers.clear(); nHoles.clear(); nSharedHits.clear();
     assoc_mcIndex.clear(); assoc_mcCollectionID.clear(); assoc_weight.clear();
     state_track_index.clear(); state_index.clear(); state_acts_index.clear();
@@ -1909,7 +1908,6 @@ void B0Trackers::bindTrackChain(const std::string& trkPrefix, TrackChain& c) {
     br(trkPrefix + "charge", &c.charge);
     br(trkPrefix + "index", &c.index);
     br(trkPrefix + "type", &c.type);
-    br(trkPrefix + "surface", &c.surface);
     br(trkPrefix + "time", &c.time);
     br(trkPrefix + "pdg", &c.pdg);
     br(trkPrefix + "nStates", &c.nStates);
