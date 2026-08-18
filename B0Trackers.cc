@@ -75,12 +75,31 @@ extern "C" {
 
 namespace {
 
+// Collection access is deliberately split into required and optional.
+//
+// A blanket catch(...) makes six different situations indistinguishable in the
+// ntuple -- genuinely empty, factory not registered, collection renamed,
+// upstream factory threw, plugin/EICrecon mismatch, real reconstruction bug --
+// and writes a zero count for all of them. That is exactly how "B0 tracks are
+// zero" hides its own cause. Required products therefore fail loudly, and
+// optional products are reported through has_* branches rather than by
+// conflating absence with emptiness.
+
+// Required: any failure propagates and aborts the job.
 template <typename T>
-std::vector<const T*> getOpt(const std::shared_ptr<const JEvent>& event, const char* name) {
-    try {
-        return event->Get<T>(name);
-    } catch (...) {
-        return {};
+std::vector<const T*> getRequired(const std::shared_ptr<const JEvent>& event, const char* name) {
+    return event->Get<T>(name);
+}
+
+// Optional: returns false only when no factory is registered for (T, name).
+// An exception thrown *by* an existing factory still propagates -- that is a
+// reconstruction failure, not an absent collection.
+template <typename T>
+bool getOpt(const std::shared_ptr<const JEvent>& event, const char* name,
+            std::vector<const T*>& out) {
+    out.clear();
+    if (event->GetFactory<T>(name, false) == nullptr) {
+        return false;
     }
 }
 
@@ -119,6 +138,9 @@ void B0Trackers::Init() {
                              "Max |localZ| (mm) allowed for nearest-sensor fallback");
     app->SetDefaultParameter("B0Trackers:fail_on_empty_sensor_map", m_failOnEmptySensorMap,
                              "Throw in Init if the B0 sensor map is empty");
+    app->SetDefaultParameter("B0Trackers:fail_on_incomplete_surface_map",
+                             m_failOnIncompleteSurfaceMap,
+                             "Throw in Init unless every B0 sensor maps to an ACTS surface");
 
     if (const char* cfg = std::getenv("DETECTOR_CONFIG")) {
         m_geometryName = cfg;
@@ -127,10 +149,26 @@ void B0Trackers::Init() {
         m_detectorPath = path;
     }
 
+    // RAII: several geometry and service calls below can throw, and a manual
+    // release on every path is one edit away from leaking the global lock and
+    // deadlocking the job.
     auto rootLock = app->GetService<JGlobalRootLock>();
-    rootLock->acquire_write_lock();
-
-    TDirectory* prevDir = gDirectory;
+    struct RootWriteLock {
+        std::shared_ptr<JGlobalRootLock> lock;
+        TDirectory* prevDir = nullptr;
+        explicit RootWriteLock(std::shared_ptr<JGlobalRootLock> l) : lock(std::move(l)) {
+            lock->acquire_write_lock();
+            prevDir = gDirectory;
+        }
+        ~RootWriteLock() {
+            if (prevDir != nullptr) {
+                prevDir->cd();
+            }
+            lock->release_lock();
+        }
+        RootWriteLock(const RootWriteLock&) = delete;
+        RootWriteLock& operator=(const RootWriteLock&) = delete;
+    } rootWriteLock{rootLock};
     auto rf_svc = app->GetService<RootFile_service>();
     TFile* outfile = rf_svc->GetHistFile()->GetFile();
     TDirectory* dir = outfile->GetDirectory("B0Trackers");
@@ -138,7 +176,6 @@ void B0Trackers::Init() {
         dir = outfile->mkdir("B0Trackers");
     }
     if (dir == nullptr) {
-        rootLock->release_lock();
         throw JException("B0Trackers: failed to create output directory");
     }
     dir->cd();
@@ -403,6 +440,28 @@ void B0Trackers::Init() {
     m_tree->Branch("n_sensor_map_failed", &m_nSensorMapFailed);
     m_tree->Branch("n_pixel_snap_failed", &m_nPixelSnapFailed);
 
+    // Input availability. A false here means the factory is not registered at
+    // all -- distinct from a registered factory that produced nothing.
+    m_tree->Branch("has_raw_assocs", &m_hasRawAssocs);
+    m_tree->Branch("has_stub_seeds", &m_hasStubSeeds);
+    m_tree->Branch("has_truth_seeds", &m_hasTruthSeeds);
+    m_tree->Branch("has_ts_track_params", &m_hasTsTrackParams);
+    m_tree->Branch("has_ts_trajectories", &m_hasTsTrajectories);
+    m_tree->Branch("has_ts_trajectories_unfiltered", &m_hasTsTrajectoriesUnfiltered);
+    m_tree->Branch("has_ts_tracks", &m_hasTsTracks);
+    m_tree->Branch("has_ts_assocs", &m_hasTsAssocs);
+    m_tree->Branch("has_ts_acts_states", &m_hasTsActsStates);
+    m_tree->Branch("has_ts_acts_tracks", &m_hasTsActsTracks);
+    m_tree->Branch("has_ts_tracks_unfiltered", &m_hasTsTracksUnfiltered);
+    m_tree->Branch("has_ckf_track_params", &m_hasCkfTrackParams);
+    m_tree->Branch("has_ckf_trajectories", &m_hasCkfTrajectories);
+    m_tree->Branch("has_ckf_trajectories_unfiltered", &m_hasCkfTrajectoriesUnfiltered);
+    m_tree->Branch("has_ckf_tracks", &m_hasCkfTracks);
+    m_tree->Branch("has_ckf_assocs", &m_hasCkfAssocs);
+    m_tree->Branch("has_ckf_acts_states", &m_hasCkfActsStates);
+    m_tree->Branch("has_ckf_acts_tracks", &m_hasCkfActsTracks);
+    m_tree->Branch("has_ckf_tracks_unfiltered", &m_hasCkfTracksUnfiltered);
+
     m_geoSvc = app->GetService<DD4hep_service>();
     m_actsGeoSvc = app->GetService<ACTSGeo_service>();
     m_actsGeoProvider = m_actsGeoSvc ? m_actsGeoSvc->actsGeoProvider() : nullptr;
@@ -429,10 +488,6 @@ void B0Trackers::Init() {
 
     auto b0Det = m_geoSvc->detector()->detector("B0Tracker");
     if (!b0Det.isValid()) {
-        if (prevDir != nullptr) {
-            prevDir->cd();
-        }
-        rootLock->release_lock();
         throw JException("B0Trackers: detector B0Tracker is not valid");
     }
 
@@ -528,46 +583,106 @@ void B0Trackers::Init() {
                 m_schemaVersion, m_geometryName, m_sensorRefs.size(), m_surfaceToSensorIdx.size(),
                 m_hasPixX, m_hasPixY, m_hasPixZ, m_perPlaneFrontBack);
 
-    if (prevDir != nullptr) {
-        prevDir->cd();
-    }
-    rootLock->release_lock();
-
     if (m_sensorRefs.empty() && m_failOnEmptySensorMap) {
         throw JException("B0Trackers: empty sensor map (check B0TrackerHits id fields / geometry)");
+    }
+    // An incomplete ACTS->DD4hep surface map is silently absorbed by the
+    // nearest-sensor fallback, which is a debugging facility rather than a
+    // physics-grade mapping. Production runs should require exact coverage.
+    if (m_failOnIncompleteSurfaceMap && !m_sensorRefs.empty() &&
+        m_surfaceToSensorIdx.size() != m_sensorRefs.size()) {
+        throw JException(
+            "B0Trackers: incomplete ACTS surface map (" +
+            std::to_string(m_surfaceToSensorIdx.size()) + " of " +
+            std::to_string(m_sensorRefs.size()) +
+            " sensors mapped exactly); set B0Trackers:fail_on_incomplete_surface_map=0 "
+            "to fall back to nearest-sensor matching");
     }
 }
 
 void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
-    auto mcparticles = getOpt<edm4hep::MCParticle>(event, "MCParticles");
-    auto simHits     = getOpt<edm4hep::SimTrackerHit>(event, "B0TrackerHits");
-    auto rawHits     = getOpt<edm4eic::RawTrackerHit>(event, "B0TrackerRawHits");
-    auto recHits     = getOpt<edm4eic::TrackerHit>(event, "B0TrackerRecHits");
-    auto rawAssocs   = getOpt<edm4eic::MCRecoTrackerHitAssociation>(event, "B0TrackerRawHitAssociations");
-    auto measurements = getOpt<edm4eic::Measurement2D>(event, "B0TrackerMeasurements");
-    auto stubSeeds   = getOpt<edm4eic::TrackSeed>(event, "B0TrackerSeeds");
-    auto truthSeeds  = getOpt<edm4eic::TrackSeed>(event, "B0TrackerTruthSeeds");
+    // Required -- a missing or throwing factory here aborts the job.
+    auto mcparticles  = getRequired<edm4hep::MCParticle>(event, "MCParticles");
+    auto simHits      = getRequired<edm4hep::SimTrackerHit>(event, "B0TrackerHits");
+    auto rawHits      = getRequired<edm4eic::RawTrackerHit>(event, "B0TrackerRawHits");
+    auto recHits      = getRequired<edm4eic::TrackerHit>(event, "B0TrackerRecHits");
+    auto measurements = getRequired<edm4eic::Measurement2D>(event, "B0TrackerMeasurements");
 
-    auto tsTracks = getOpt<edm4eic::TrackParameters>(event, "B0TrackerCKFTruthSeededTrackParameters");
-    auto tsTrajectories = getOpt<edm4eic::Trajectory>(event, "B0TrackerCKFTruthSeededTrajectories");
-    auto tsEdmTracks = getOpt<edm4eic::Track>(event, "B0TrackerCKFTruthSeededTracks");
-    auto tsAssocs = getOpt<edm4eic::MCRecoTrackParticleAssociation>(
-        event, "B0TrackerCKFTruthSeededTrackAssociations");
-    auto tsActsTrackStates =
-        getOpt<Acts::ConstVectorMultiTrajectory>(event, "B0TrackerCKFTruthSeededActsTrackStates");
-    auto tsActsTracks = getOpt<Acts::ConstVectorTrackContainer>(event, "B0TrackerCKFTruthSeededActsTracks");
-    auto tsUnfiltered = getOpt<edm4eic::Track>(event, "B0TrackerCKFTruthSeededTracksUnfiltered");
+    // Optional -- a configuration may legitimately not run these stages.
+    std::vector<const edm4eic::MCRecoTrackerHitAssociation*> rawAssocs;
+    std::vector<const edm4eic::TrackSeed*> stubSeeds;
+    std::vector<const edm4eic::TrackSeed*> truthSeeds;
+    const bool hasRawAssocs =
+        getOpt(event, "B0TrackerRawHitAssociations", rawAssocs);
+    const bool hasStubSeeds  = getOpt(event, "B0TrackerSeeds", stubSeeds);
+    const bool hasTruthSeeds = getOpt(event, "B0TrackerTruthSeeds", truthSeeds);
 
-    auto ckfTracks = getOpt<edm4eic::TrackParameters>(event, "B0TrackerCKFTrackParameters");
-    auto ckfTrajectories = getOpt<edm4eic::Trajectory>(event, "B0TrackerCKFTrajectories");
-    auto ckfEdmTracks = getOpt<edm4eic::Track>(event, "B0TrackerCKFTracks");
-    auto ckfAssocs = getOpt<edm4eic::MCRecoTrackParticleAssociation>(event, "B0TrackerCKFTrackAssociations");
-    auto ckfActsTrackStates =
-        getOpt<Acts::ConstVectorMultiTrajectory>(event, "B0TrackerCKFActsTrackStates");
-    auto ckfActsTracks = getOpt<Acts::ConstVectorTrackContainer>(event, "B0TrackerCKFActsTracks");
-    auto ckfUnfiltered = getOpt<edm4eic::Track>(event, "B0TrackerCKFTracksUnfiltered");
+    std::vector<const edm4eic::TrackParameters*> tsTracks;
+    std::vector<const edm4eic::Trajectory*> tsTrajectories;
+    std::vector<const edm4eic::Trajectory*> tsTrajectoriesUnfiltered;
+    std::vector<const edm4eic::Track*> tsEdmTracks;
+    std::vector<const edm4eic::MCRecoTrackParticleAssociation*> tsAssocs;
+    std::vector<const Acts::ConstVectorMultiTrajectory*> tsActsTrackStates;
+    std::vector<const Acts::ConstVectorTrackContainer*> tsActsTracks;
+    std::vector<const edm4eic::Track*> tsUnfiltered;
+    const bool hasTsTrackParams =
+        getOpt(event, "B0TrackerCKFTruthSeededTrackParameters", tsTracks);
+    const bool hasTsTrajectories =
+        getOpt(event, "B0TrackerCKFTruthSeededTrajectories", tsTrajectories);
+    const bool hasTsTrajectoriesUnfiltered =
+        getOpt(event, "B0TrackerCKFTruthSeededTrajectoriesUnfiltered", tsTrajectoriesUnfiltered);
+    const bool hasTsTracks = getOpt(event, "B0TrackerCKFTruthSeededTracks", tsEdmTracks);
+    const bool hasTsAssocs =
+        getOpt(event, "B0TrackerCKFTruthSeededTrackAssociations", tsAssocs);
+    const bool hasTsActsStates =
+        getOpt(event, "B0TrackerCKFTruthSeededActsTrackStates", tsActsTrackStates);
+    const bool hasTsActsTracks =
+        getOpt(event, "B0TrackerCKFTruthSeededActsTracks", tsActsTracks);
+    const bool hasTsTracksUnfiltered =
+        getOpt(event, "B0TrackerCKFTruthSeededTracksUnfiltered", tsUnfiltered);
+
+    std::vector<const edm4eic::TrackParameters*> ckfTracks;
+    std::vector<const edm4eic::Trajectory*> ckfTrajectories;
+    std::vector<const edm4eic::Trajectory*> ckfTrajectoriesUnfiltered;
+    std::vector<const edm4eic::Track*> ckfEdmTracks;
+    std::vector<const edm4eic::MCRecoTrackParticleAssociation*> ckfAssocs;
+    std::vector<const Acts::ConstVectorMultiTrajectory*> ckfActsTrackStates;
+    std::vector<const Acts::ConstVectorTrackContainer*> ckfActsTracks;
+    std::vector<const edm4eic::Track*> ckfUnfiltered;
+    const bool hasCkfTrackParams =
+        getOpt(event, "B0TrackerCKFTrackParameters", ckfTracks);
+    const bool hasCkfTrajectories = getOpt(event, "B0TrackerCKFTrajectories", ckfTrajectories);
+    const bool hasCkfTrajectoriesUnfiltered =
+        getOpt(event, "B0TrackerCKFTrajectoriesUnfiltered", ckfTrajectoriesUnfiltered);
+    const bool hasCkfTracks  = getOpt(event, "B0TrackerCKFTracks", ckfEdmTracks);
+    const bool hasCkfAssocs  = getOpt(event, "B0TrackerCKFTrackAssociations", ckfAssocs);
+    const bool hasCkfActsStates =
+        getOpt(event, "B0TrackerCKFActsTrackStates", ckfActsTrackStates);
+    const bool hasCkfActsTracks = getOpt(event, "B0TrackerCKFActsTracks", ckfActsTracks);
+    const bool hasCkfTracksUnfiltered =
+        getOpt(event, "B0TrackerCKFTracksUnfiltered", ckfUnfiltered);
 
     std::lock_guard<std::mutex> lock(m_fillMutex);
+
+    m_hasRawAssocs               = hasRawAssocs;
+    m_hasStubSeeds               = hasStubSeeds;
+    m_hasTruthSeeds              = hasTruthSeeds;
+    m_hasTsTrackParams           = hasTsTrackParams;
+    m_hasTsTrajectories          = hasTsTrajectories;
+    m_hasTsTrajectoriesUnfiltered = hasTsTrajectoriesUnfiltered;
+    m_hasTsTracks                = hasTsTracks;
+    m_hasTsAssocs                = hasTsAssocs;
+    m_hasTsActsStates            = hasTsActsStates;
+    m_hasTsActsTracks            = hasTsActsTracks;
+    m_hasTsTracksUnfiltered      = hasTsTracksUnfiltered;
+    m_hasCkfTrackParams          = hasCkfTrackParams;
+    m_hasCkfTrajectories         = hasCkfTrajectories;
+    m_hasCkfTrajectoriesUnfiltered = hasCkfTrajectoriesUnfiltered;
+    m_hasCkfTracks               = hasCkfTracks;
+    m_hasCkfAssocs               = hasCkfAssocs;
+    m_hasCkfActsStates           = hasCkfActsStates;
+    m_hasCkfActsTracks           = hasCkfActsTracks;
+    m_hasCkfTracksUnfiltered     = hasCkfTracksUnfiltered;
 
     m_eventNumber = event->GetEventNumber();
 

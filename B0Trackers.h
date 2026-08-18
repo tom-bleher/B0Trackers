@@ -55,6 +55,7 @@ private:
     bool m_hasPixZ = false;
     double m_fallbackMaxNormalMm = 2.0;
     bool m_failOnEmptySensorMap = true;
+    bool m_failOnIncompleteSurfaceMap = false;
 
     struct SensorRef {
         std::uint64_t cellID = 0;
@@ -253,4 +254,26 @@ private:
     int m_nSensorMapFallback = 0;
     int m_nSensorMapFailed = 0;
     int m_nPixelSnapFailed = 0;
+
+    // Optional-input presence. Distinguishes "the factory is not registered"
+    // from "the collection is genuinely empty"; required inputs throw instead.
+    bool m_hasRawAssocs = false;
+    bool m_hasStubSeeds = false;
+    bool m_hasTruthSeeds = false;
+    bool m_hasTsTrackParams = false;
+    bool m_hasTsTrajectories = false;
+    bool m_hasTsTrajectoriesUnfiltered = false;
+    bool m_hasTsTracks = false;
+    bool m_hasTsAssocs = false;
+    bool m_hasTsActsStates = false;
+    bool m_hasTsActsTracks = false;
+    bool m_hasTsTracksUnfiltered = false;
+    bool m_hasCkfTrackParams = false;
+    bool m_hasCkfTrajectories = false;
+    bool m_hasCkfTrajectoriesUnfiltered = false;
+    bool m_hasCkfTracks = false;
+    bool m_hasCkfAssocs = false;
+    bool m_hasCkfActsStates = false;
+    bool m_hasCkfActsTracks = false;
+    bool m_hasCkfTracksUnfiltered = false;
 };
