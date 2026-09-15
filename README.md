@@ -27,13 +27,20 @@ cmake --install build    # -> $EICrecon_MY/plugins/B0Trackers.so
 ```
 
 Helpers (no EICrecon). The checks report failures explicitly instead of via
-`assert`, so they stay live in a `-DNDEBUG` build:
+`assert`, so they stay live in a `-DNDEBUG` build. They can now be configured
+through CMake without loading the EICrecon dependency stack:
+
+```bash
+cmake -S . -B build-helpers -DB0Trackers_BUILD_PLUGIN=OFF
+cmake --build build-helpers
+ctest --test-dir build-helpers --output-on-failure
+```
+
+The direct standalone build remains available:
 
 ```bash
 c++ -std=c++17 -I. tests/test_helpers.cc -o build/B0TrackersHelpers_test
 ./build/B0TrackersHelpers_test
-# or, from a configured build tree:
-ctest --test-dir build --output-on-failure
 ```
 
 ## Run
@@ -41,7 +48,21 @@ ctest --test-dir build --output-on-failure
 ```bash
 eicrecon -Pplugins=B0Trackers \
   -Phistsfile=b0trackers.root \
-  -Pacts:MaterialMap=$DETECTOR_PATH/calibrations/materials-map.cbor \
+  sim.edm4hep.root
+```
+
+Do not blindly override `acts:MaterialMap` with a generic
+`calibrations/materials-map.cbor`. The B0 CKF is sensitive to the material
+model, so use the material map selected for the exact detector geometry, or
+pass an explicit override only when that map was generated and validated for
+the geometry being run.
+
+For production validation runs, prefer exact ACTS surface coverage:
+
+```bash
+eicrecon -Pplugins=B0Trackers \
+  -PB0Trackers:fail_on_incomplete_surface_map=1 \
+  -Phistsfile=b0trackers.root \
   sim.edm4hep.root
 ```
 
@@ -66,7 +87,7 @@ Use a B0 stub-seeder build for those branches.
 | Selected primary | `sel_primary_*`, `isSelPrimary` | Highest-p `primary_pdg`/`primary_status` |
 | Selector flag | `matchesPrimarySelector` (`isPrimary`) | Every matching MC, not just selected |
 | Stations on selected | `n_stations_primary` | Unique stations of `isSelPrimary` truth hits |
-| RecHits / RawHits | `rec_*`, `raw_*` | Digitized (10 keV, 8 ns); RecHit *x* is the cell center |
+| RecHits / RawHits | `rec_*`, `raw_*` | B0 digitization uses a 10 keV threshold and 30 ps time resolution; RecHit *x* is the cell center |
 | Cell truth purity | `{rec,raw}_nContribSim`, `_nContribMc`, `_dominantFrac`, `_totalEdep`, `_mixedCell` | `mcIndex` is the largest *summed* contributor, not the largest single step |
 | Cell fired | `cell_fired` | The cell produced a RawHit -- **not** that this SimHit contributed (the digitizer links subthreshold SimHits to a fired cell) |
 | Seed survival | `seed_became_track`, `seed_made_unfiltered_track`, `seed_survived_ambiguity`, `seed_n_{unfiltered,filtered}_tracks` | Separates a CKF failure from an ambiguity-solver rejection; `-1` = unknowable (no unfiltered collection) |
@@ -76,7 +97,7 @@ Use a B0 stub-seeder build for those branches.
 | Track *p*, θ, loc | `trk_*` | **IP perigee**, not a B0-plane fit |
 | On-plane state | `trk_state_*`, `trk_x_on_plane` | `state_index` 0 = innermost |
 | Sensor map | `trk_state_mapping_method` | 0 unresolved, 1 exact, 2 gated fallback |
-| PDG | `trk_pdg` | From `edm4eic::Track` (CKF pion hypothesis, not 2212) |
+| PDG | `trk_pdg` | From `edm4eic::Track`; the current B0 CKF configuration uses the proton hypothesis (2212) |
 | q/p = 0 | `p` is NaN, `momentum_resolved=0` | Not *p* = 0 |
 
 Stage counters: `n_simhits`, `n_rawhits`, `n_rechits`, `n_measurements`,
