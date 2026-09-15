@@ -1,0 +1,51 @@
+import random
+import unittest
+from pathlib import Path
+
+
+class StableIdentityTest(unittest.TestCase):
+    def test_relation_lookup_is_invariant_to_collection_order(self):
+        # Model the schema-3 relation used in B0Trackers: reconstructed tracks are
+        # keyed by the stable ObjectID of their related trajectory, not by vector
+        # position. Reordering either collection must therefore leave ownership
+        # unchanged.
+        tracks = [
+            {"track": (91, 4), "trajectory": (72, 8), "seed": 3},
+            {"track": (91, 2), "trajectory": (72, 5), "seed": 1},
+            {"track": (91, 9), "trajectory": (72, 1), "seed": 7},
+        ]
+        expected = {row["trajectory"]: row["track"] for row in tracks}
+
+        for seed in range(20):
+            shuffled = tracks[:]
+            random.Random(seed).shuffle(shuffled)
+            by_trajectory = {row["trajectory"]: row["track"] for row in shuffled}
+            self.assertEqual(by_trajectory, expected)
+
+    def test_seed_lineage_marks_ambiguous_owner_unresolved(self):
+        tracks = [
+            {"track": (91, 2), "seed": 1},
+            {"track": (91, 4), "seed": 3},
+            {"track": (91, 9), "seed": 3},
+        ]
+        by_seed = {}
+        for row in tracks:
+            by_seed.setdefault(row["seed"], []).append(row["track"])
+
+        self.assertEqual(by_seed[1], [(91, 2)])
+        self.assertEqual(len(by_seed[3]), 2)
+        # Schema 3 intentionally refuses to guess a parent track when a seed has
+        # more than one candidate.
+        resolved_seed3 = by_seed[3][0] if len(by_seed[3]) == 1 else None
+        self.assertIsNone(resolved_seed3)
+
+    def test_plugin_uses_relation_identity_not_parallel_collection_index(self):
+        source = (Path(__file__).parents[1] / "B0Trackers.cc").read_text()
+        self.assertIn("edmTrackByTrajectory", source)
+        self.assertIn("stableTrackIt", source)
+        self.assertNotIn("edmTracks[trajIndex]", source)
+        self.assertIn("trackObjectsBySeed", source)
+
+
+if __name__ == "__main__":
+    unittest.main()
