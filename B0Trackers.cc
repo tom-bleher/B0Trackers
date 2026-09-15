@@ -1675,9 +1675,9 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             auto tp = (trajectory->trackParameters_size() > 0)
                 ? trajectory->getTrackParameters(0)
                 : edm4eic::TrackParameters::makeEmpty();
-            if (!tp.isAvailable() && trajIndex < tracks.size() && tracks[trajIndex] != nullptr) {
-                tp = *tracks[trajIndex];
-            }
+            // Schema 3 never guesses trajectory identity from parallel collection
+            // positions. If the trajectory does not carry fitted parameters, leave
+            // this object unresolved rather than borrowing tracks[trajIndex].
             if (!tp.isAvailable()) continue;
 
             const float theta  = tp.getTheta();
@@ -1718,13 +1718,6 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 chi2 = stableEdmTrack->getChi2();
                 ndf = static_cast<int>(stableEdmTrack->getNdf());
                 pdg = stableEdmTrack->getPdg();
-            } else if (trajIndex < edmTracks.size() && edmTracks[trajIndex] != nullptr) {
-                chi2 = edmTracks[trajIndex]->getChi2();
-                ndf = static_cast<int>(edmTracks[trajIndex]->getNdf());
-                pdg = edmTracks[trajIndex]->getPdg();
-                const auto objectId = edmTracks[trajIndex]->id();
-                objectIndex = objectId.index;
-                objectCollectionID = objectId.collectionID;
             }
             int assocMc = -1;
             std::uint32_t assocCol = 0;
