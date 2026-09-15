@@ -44,8 +44,14 @@ class StableIdentityTest(unittest.TestCase):
         self.assertIn("edmTrackByTrajectory", source)
         self.assertIn("stableTrackIt", source)
         self.assertIn("trackObjectsBySeed", source)
-        self.assertNotIn("edmTracks[trajIndex]", source)
-        self.assertNotIn("tracks[trajIndex]", source)
+
+        # Documentation may mention the rejected positional patterns. Guard the
+        # implementation itself by checking non-comment source lines only.
+        code = "\n".join(
+            line for line in source.splitlines() if not line.lstrip().startswith("//")
+        )
+        self.assertNotIn("edmTracks[trajIndex]", code)
+        self.assertNotIn("tracks[trajIndex]", code)
 
 
 if __name__ == "__main__":
