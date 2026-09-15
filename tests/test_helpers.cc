@@ -90,6 +90,14 @@ int main() {
     }
     CHECK(closeTo(wrapPi(0.1), 0.1));
 
+    CHECK(kSchemaVersion == 3);
+    CHECK(preferredEstimateKind(true, false, false) == kEstimatePredicted);
+    CHECK(preferredEstimateKind(true, true, false) == kEstimateFiltered);
+    CHECK(preferredEstimateKind(true, true, true) == kEstimateSmoothed);
+    CHECK(preferredEstimateKind(false, false, false) == kEstimateNone);
+    CHECK(closeTo(nativeTimeToNs(299.792458, 299.792458), 1.0));
+    CHECK(std::isnan(nativeTimeToNs(1.0, 0.0)));
+
     // The test harness itself must be able to fail; a check that never trips is
     // indistinguishable from one that was compiled away.
     {
