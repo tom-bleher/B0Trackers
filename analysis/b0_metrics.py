@@ -167,7 +167,18 @@ def binned_efficiency(values: Sequence[float], passed: Sequence[bool], eligible:
             if inside:
                 den += 1
                 num += bool(ok)
-        rows.append({"low": float(lo), "high": float(hi), **wilson_efficiency(num, den).as_dict()})
+        eff = wilson_efficiency(num, den).as_dict()
+        rows.append(
+            {
+                "bin_low": float(lo),
+                "bin_high": float(hi),
+                "numerator": eff["numerator"],
+                "denominator": eff["denominator"],
+                "value": eff["value"],
+                "interval_low": eff["low"],
+                "interval_high": eff["high"],
+            }
+        )
     return rows
 
 

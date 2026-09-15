@@ -50,6 +50,10 @@ class B0MetricsTest(unittest.TestCase):
         self.assertEqual(result[0]["numerator"], 1)
         self.assertEqual(result[1]["denominator"], 2)
         self.assertEqual(result[1]["numerator"], 1)
+        self.assertEqual(result[0]["bin_low"], 0.0)
+        self.assertEqual(result[0]["bin_high"], 5.0)
+        self.assertLessEqual(result[0]["interval_low"], result[0]["value"])
+        self.assertGreaterEqual(result[0]["interval_high"], result[0]["value"])
 
     def test_provenance_mismatches(self):
         baseline = {"provenance": {"geometry": "A", "schema": [2]}}
