@@ -66,10 +66,11 @@ eicrecon -Pplugins=B0Trackers \
   sim.edm4hep.root
 ```
 
-With multiple JANA worker threads, event analysis may complete out of order;
-the ROOT writer section remains serialized, so TTree row order is not a stable
-event identity. Use the `eventNumber` branch when comparing outputs across
-thread counts or runtime implementations.
+With multiple JANA worker threads, event analysis may complete out of order.
+Per-event analysis runs in thread-local buffers; only the final swap into the
+ROOT branch-backed buffers and `TTree::Fill()` are serialized. TTree row order
+is therefore not a stable event identity. Use the `eventNumber` branch when
+comparing outputs across thread counts or runtime implementations.
 
 Inputs are split into required and optional. `MCParticles`, `B0TrackerHits`,
 `B0TrackerRawHits`, `B0TrackerRecHits` and `B0TrackerMeasurements` are
