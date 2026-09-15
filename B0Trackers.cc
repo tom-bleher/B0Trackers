@@ -185,6 +185,8 @@ void B0Trackers::Init() {
                              "PDG code used to tag the selected primary particle");
     app->SetDefaultParameter("B0Trackers:primary_status", m_primaryStatus,
                              "Generator status used to tag the selected primary particle");
+    app->SetDefaultParameter("B0Trackers:min_measurement_stations", m_minMeasurementStations,
+                             "Minimum distinct selected-primary measurement stations for reconstructability");
     app->SetDefaultParameter("B0Trackers:fallback_max_normal_mm", m_fallbackMaxNormalMm,
                              "Max |localZ| (mm) allowed for nearest-sensor fallback");
     app->SetDefaultParameter("B0Trackers:fail_on_empty_sensor_map", m_failOnEmptySensorMap,
@@ -365,6 +367,12 @@ void B0Trackers::Init() {
     m_tree->Branch("sel_primary_thscat_mrad", &m_selPrimaryThscatMrad);
     m_tree->Branch("sel_primary_charge", &m_selPrimaryCharge);
     m_tree->Branch("n_stations_primary", &m_nStationsPrimary);
+    m_tree->Branch("min_measurement_stations_required", &m_minMeasurementStations);
+    m_tree->Branch("n_measurements_selected_primary", &m_nSelectedPrimaryMeasurements);
+    m_tree->Branch("n_measurement_stations_selected_primary",
+                   &m_nMeasurementStationsSelectedPrimary);
+    m_tree->Branch("sel_primary_measurement_reconstructable",
+                   &m_selPrimaryMeasurementReconstructable);
     m_tree->Branch("sel_primary_has_seed", &m_selPrimaryHasSeed);
     m_tree->Branch("sel_primary_has_unfiltered_track", &m_selPrimaryHasUnfilteredTrack);
     m_tree->Branch("sel_primary_has_filtered_track", &m_selPrimaryHasFilteredTrack);
@@ -849,6 +857,9 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     m_selPrimaryThscatMrad = nan;
     m_selPrimaryCharge = nan;
     m_nStationsPrimary = 0;
+    m_nSelectedPrimaryMeasurements = hasRawAssocs ? 0 : -1;
+    m_nMeasurementStationsSelectedPrimary = hasRawAssocs ? 0 : -1;
+    m_selPrimaryMeasurementReconstructable = hasRawAssocs ? 0 : -1;
     m_selPrimaryHasSeed = 0;
     m_selPrimaryHasUnfilteredTrack = 0;
     m_selPrimaryHasFilteredTrack = 0;
@@ -1096,6 +1107,53 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 collectionID == m_selPrimaryMcCollectionID &&
                 index == m_selPrimaryMcIndex) ? 1 : 0;
     };
+
+    // A truth crossing is only geometrical acceptance. Reconstructability also
+    // requires digitized/reconstructed measurements attributable to the selected
+    // primary in enough distinct physical B0 stations. Build the measurement
+    // truth label from the summed truth composition of its constituent raw cells.
+    m_nSelectedPrimaryMeasurements = hasRawAssocs ? 0 : -1;
+    m_nMeasurementStationsSelectedPrimary = hasRawAssocs ? 0 : -1;
+    m_selPrimaryMeasurementReconstructable = hasRawAssocs ? 0 : -1;
+    if (hasRawAssocs && m_selPrimaryMcIndex >= 0) {
+        std::set<int> selectedMeasurementStations;
+        for (const auto* measurement : measurements) {
+            if (measurement == nullptr) continue;
+            std::map<std::pair<std::uint32_t, int>, double> measurementTruth;
+            std::set<std::uint64_t> seenCells;
+            std::set<int> measurementStations;
+            for (const auto& hit : measurement->getHits()) {
+                const auto raw = hit.getRawHit();
+                if (!raw.isAvailable()) continue;
+                const auto cid = static_cast<std::uint64_t>(raw.getCellID());
+                if (!seenCells.insert(cid).second) continue;
+                int plane = -1, module = -1, sensor = -1, side = -1;
+                decodeIds(cid, plane, module, sensor, side);
+                const int station = stationOf(plane);
+                if (station > 0) measurementStations.insert(station);
+                const auto truthIt = cellTruthEDep.find(cid);
+                if (truthIt == cellTruthEDep.end()) continue;
+                for (const auto& [mcId, edep] : truthIt->second) {
+                    measurementTruth[mcId] += edep;
+                }
+            }
+            if (measurementTruth.empty()) continue;
+            const auto dominant = std::max_element(
+                measurementTruth.begin(), measurementTruth.end(),
+                [](const auto& a, const auto& b) { return a.second < b.second; });
+            if (dominant == measurementTruth.end()) continue;
+            if (dominant->first.first != m_selPrimaryMcCollectionID ||
+                dominant->first.second != m_selPrimaryMcIndex) {
+                continue;
+            }
+            ++m_nSelectedPrimaryMeasurements;
+            selectedMeasurementStations.insert(measurementStations.begin(), measurementStations.end());
+        }
+        m_nMeasurementStationsSelectedPrimary =
+            static_cast<int>(selectedMeasurementStations.size());
+        m_selPrimaryMeasurementReconstructable =
+            m_nMeasurementStationsSelectedPrimary >= m_minMeasurementStations ? 1 : 0;
+    }
 
     for (const auto* h : simHits) {
         const auto mc = h->getParticle();

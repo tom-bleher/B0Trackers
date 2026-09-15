@@ -174,6 +174,7 @@ private:
 
     int m_primaryPdg = 2212;
     int m_primaryStatus = 1;
+    int m_minMeasurementStations = 3;
 
     // SimTrackerHit-level (cell centers of truth hits, not RecHits).
     std::vector<double> vm_xR, vm_yR, vm_zR;
@@ -274,6 +275,9 @@ private:
     double m_selPrimaryThscatMrad = 0.0;
     double m_selPrimaryCharge = 0.0;
     int m_nStationsPrimary = 0; // selected primary only
+    int m_nSelectedPrimaryMeasurements = -1;
+    int m_nMeasurementStationsSelectedPrimary = -1;
+    int m_selPrimaryMeasurementReconstructable = -1;
     int m_selPrimaryHasSeed = 0;
     int m_selPrimaryHasUnfilteredTrack = 0;
     int m_selPrimaryHasFilteredTrack = 0;
