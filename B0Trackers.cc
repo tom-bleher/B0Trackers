@@ -1131,8 +1131,8 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 decodeIds(cid, plane, module, sensor, side);
                 const int station = stationOf(plane);
                 if (station > 0) measurementStations.insert(station);
-                const auto truthIt = cellTruthEDep.find(cid);
-                if (truthIt == cellTruthEDep.end()) continue;
+                const auto truthIt = cellParticleEDepByCell.find(cid);
+                if (truthIt == cellParticleEDepByCell.end()) continue;
                 for (const auto& [mcId, edep] : truthIt->second) {
                     measurementTruth[mcId] += edep;
                 }
