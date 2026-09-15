@@ -211,14 +211,19 @@ def build_report(path: Path, tree_name: str, min_stations: int, make_plots: bool
             exact = int(np.sum(_scalar(tree, "n_sensor_map_exact", np)))
             fallback = int(np.sum(_scalar(tree, "n_sensor_map_fallback", np)))
             failed = int(np.sum(_scalar(tree, "n_sensor_map_failed", np)))
-            total = exact + fallback + failed
+            resolved = exact + fallback
+            all_states = resolved + failed
             mapping = {
                 "exact": exact,
                 "fallback": fallback,
-                "failed": failed,
-                "exact_fraction": exact / total if total else math.nan,
-                "fallback_fraction": fallback / total if total else math.nan,
-                "failed_fraction": failed / total if total else math.nan,
+                "failed_raw": failed,
+                "exact_fraction_of_resolved": exact / resolved if resolved else math.nan,
+                "fallback_fraction_of_resolved": fallback / resolved if resolved else math.nan,
+                "failed_fraction_all_states": failed / all_states if all_states else math.nan,
+                "note": (
+                    "schema-2 n_sensor_map_failed also counts non-physics states that are not expected to map "
+                    "to a B0 sensor; use fallback_fraction_of_resolved for regression gating."
+                ),
             }
 
         residuals: dict[str, dict] = {}
