@@ -1,0 +1,30 @@
+name: Apply schema3 identity fix
+
+on:
+  push:
+    branches: [feat/schema3-track-diagnostics]
+    paths:
+      - tools/remove_schema3_positional_fallbacks.py
+      - .github/workflows/apply-schema3-identity-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/schema3-track-diagnostics
+          fetch-depth: 0
+      - run: python3 tools/remove_schema3_positional_fallbacks.py
+      - run: git rm tools/remove_schema3_positional_fallbacks.py .github/workflows/apply-schema3-identity-fix.yml
+      - name: Commit identity fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix(schema3): remove positional track identity fallbacks"
+          git push origin HEAD:feat/schema3-track-diagnostics
