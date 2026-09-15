@@ -17,18 +17,22 @@ Seed truth diagnostics are available in `seed_assoc_mcIndex`, `seed_assoc_mcColl
 
 ## Stable identity
 
-The legacy `*_index` fields remain for compatibility, but track summaries also expose the EDM PODIO identity:
+The legacy `*_index` fields remain for compatibility, but track summaries also expose stable EDM/PODIO identity:
 
 - `*_object_index`
 - `*_object_collectionID`
 - `*_seed_index`
+- `*_seed_collectionID`
 - `*_identity_valid`
 
 Track-to-trajectory matching is performed through the EDM `Track.trajectory` relation rather than collection position. Schema 3 deliberately has **no positional fallback** from `trajectory[i]` to `Track[i]` or `TrackParameters[i]`: if the explicit relation or trajectory-owned parameters are unavailable, identity/parameters remain unresolved rather than being guessed from parallel collection order.
 
+CKFTracking's ACTS dynamic `seed` column stores the input seed **position** (`iseed`), not the seed PODIO ObjectID. B0Trackers therefore translates that position through the actual input `TrackSeed` collection before recording seed identity or resolving ACTS-state ownership. Seed ownership maps use the full `(collectionID,index)` key.
+
 ACTS states additionally store their parent seed and, when a seed maps uniquely to one EDM track, the stable parent-track identity:
 
 - `*_state_parent_seed_index`
+- `*_state_parent_seed_collectionID`
 - `*_state_parent_track_index`
 - `*_state_parent_track_collectionID`
 - `*_state_parent_identity_valid`
