@@ -1,0 +1,30 @@
+name: Plugin build
+
+on:
+  pull_request:
+    paths:
+      - 'B0Trackers.cc'
+      - 'B0Trackers.h'
+      - 'B0TrackersHelpers.h'
+      - 'CMakeLists.txt'
+      - '.github/workflows/plugin-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  eic-shell:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cvmfs-contrib/github-action-cvmfs@v5
+      - name: Configure, build, and test plugin
+        uses: eic/run-cvmfs-osg-eic-shell@main
+        with:
+          organization: eicweb
+          platform-release: eic_xl:nightly
+          run: |
+            cmake -S . -B build-plugin -DBUILD_TESTING=ON
+            cmake --build build-plugin --parallel 2
+            ctest --test-dir build-plugin --output-on-failure
