@@ -30,12 +30,7 @@ DEFAULT_CHECKS = [
         "tolerance": 0.10,
     },
     {
-        "path": "sensor_mapping.fallback_fraction",
-        "mode": "max_increase",
-        "tolerance": 0.001,
-    },
-    {
-        "path": "sensor_mapping.failed_fraction",
+        "path": "sensor_mapping.fallback_fraction_of_resolved",
         "mode": "max_increase",
         "tolerance": 0.001,
     },
