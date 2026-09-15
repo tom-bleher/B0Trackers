@@ -1,0 +1,29 @@
+{
+  "checks": [
+    {
+      "path": "stages.filtered_over_eligible.value",
+      "mode": "max_drop",
+      "tolerance": 0.01
+    },
+    {
+      "path": "stages.truth_matched_over_eligible.value",
+      "mode": "max_drop",
+      "tolerance": 0.01
+    },
+    {
+      "path": "truth_matched.relative_delta_p.std",
+      "mode": "max_fractional_increase",
+      "tolerance": 0.10
+    },
+    {
+      "path": "sensor_mapping.fallback_fraction",
+      "mode": "max_increase",
+      "tolerance": 0.001
+    },
+    {
+      "path": "sensor_mapping.failed_fraction",
+      "mode": "max_increase",
+      "tolerance": 0.001
+    }
+  ]
+}
