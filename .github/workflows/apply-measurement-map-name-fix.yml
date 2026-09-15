@@ -1,0 +1,30 @@
+name: Apply reconstructability map-name fix
+
+on:
+  push:
+    branches: [feat/schema3-track-diagnostics]
+    paths:
+      - tools/fix_measurement_truth_map_name.py
+      - .github/workflows/apply-measurement-map-name-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/schema3-track-diagnostics
+          fetch-depth: 0
+      - run: python3 tools/fix_measurement_truth_map_name.py
+      - run: git rm tools/fix_measurement_truth_map_name.py .github/workflows/apply-measurement-map-name-fix.yml
+      - name: Commit map-name fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix(schema3): use retained cell truth map for measurements"
+          git push origin HEAD:feat/schema3-track-diagnostics
