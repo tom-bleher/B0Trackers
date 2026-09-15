@@ -19,7 +19,8 @@ The output contains `summary.json` plus plots for:
 - relative momentum residual for the truth-matched track;
 - q/p, theta, and phi pulls;
 - seed survival through CKF and ambiguity resolution;
-- ACTS-to-sensor mapping exact/fallback/failure fractions;
+- ACTS-to-sensor mapping exact/fallback fractions among resolved states, plus
+  raw failure counts;
 - measurement-state local residual RMS by B0 station;
 - geometry/link/pixel-snap diagnostic failure counts.
 
@@ -33,6 +34,12 @@ available state in the order smoothed -> filtered -> predicted, without a branch
 recording which estimate was chosen. These residuals are therefore fit-quality
 diagnostics, not an intrinsic AC-LGAD spatial-resolution measurement. A future
 schema should export the estimate kind and predicted innovation/pull explicitly.
+
+Likewise, schema 2 increments `n_sensor_map_failed` for some non-physics states
+that are not expected to map to a B0 sensor. The report preserves that raw count
+for debugging, but regression gating uses the fallback fraction among resolved
+sensor mappings instead of treating the raw failure fraction as a physics
+quality metric.
 
 ## Regression comparison
 
