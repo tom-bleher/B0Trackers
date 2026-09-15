@@ -23,6 +23,8 @@ enum StateEstimateKind {
     kEstimateSmoothed  = 3,
 };
 
+inline double quietNaN() { return std::numeric_limits<double>::quiet_NaN(); }
+
 inline int preferredEstimateKind(bool hasPredicted, bool hasFiltered, bool hasSmoothed) {
     if (hasSmoothed) {
         return kEstimateSmoothed;
@@ -42,8 +44,6 @@ inline double nativeTimeToNs(double nativeTime, double actsNsUnit) {
     }
     return nativeTime / actsNsUnit;
 }
-
-inline double quietNaN() { return std::numeric_limits<double>::quiet_NaN(); }
 
 // q/p == 0 is unbounded momentum, not p = 0.
 inline std::pair<double, bool> momentumFromQOverP(double qOverP) {
