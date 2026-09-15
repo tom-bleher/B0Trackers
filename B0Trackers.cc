@@ -1,6 +1,7 @@
 #include "B0Trackers.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -16,6 +17,8 @@
 #include <unordered_set>
 #include <utility>
 
+#include <Eigen/Cholesky>
+
 #include <JANA/JException.h>
 #include <JANA/Services/JGlobalRootLock.h>
 
@@ -27,6 +30,8 @@
 #include <Acts/ActsVersion.hpp>
 #include <Acts/Definitions/Algebra.hpp>
 #include <Acts/Definitions/TrackParametrization.hpp>
+#include <Acts/Definitions/Units.hpp>
+#include <Acts/EventData/ProxyAccessor.hpp>
 #include <Acts/EventData/TrackContainer.hpp>
 #include <Acts/EventData/TrackStateType.hpp>
 #include <Acts/EventData/VectorMultiTrajectory.hpp>
@@ -54,7 +59,7 @@
 #include <services/geometry/acts/ACTSGeo_service.h>
 #include <services/log/Log_service.h>
 
-// B0Trackers/hits branch map (schema 2):
+// B0Trackers/hits branch map (schema 3):
 //   trk_*                  = B0TrackerCKFTruthSeeded* (filtered), IP-perigee
 //   ckf_trk_*              = B0TrackerCKF* (filtered), IP-perigee
 //   *_oracle_best_*        = min |p_reco-p_sel| (cheat; also aliased as best_trk_*)
@@ -180,6 +185,8 @@ void B0Trackers::Init() {
                              "PDG code used to tag the selected primary particle");
     app->SetDefaultParameter("B0Trackers:primary_status", m_primaryStatus,
                              "Generator status used to tag the selected primary particle");
+    app->SetDefaultParameter("B0Trackers:min_measurement_stations", m_minMeasurementStations,
+                             "Minimum distinct selected-primary measurement stations for reconstructability");
     app->SetDefaultParameter("B0Trackers:fallback_max_normal_mm", m_fallbackMaxNormalMm,
                              "Max |localZ| (mm) allowed for nearest-sensor fallback");
     app->SetDefaultParameter("B0Trackers:fail_on_empty_sensor_map", m_failOnEmptySensorMap,
@@ -369,6 +376,16 @@ void B0Trackers::Init() {
     m_tree->Branch("sel_primary_thscat_mrad", &m_selPrimaryThscatMrad);
     m_tree->Branch("sel_primary_charge", &m_selPrimaryCharge);
     m_tree->Branch("n_stations_primary", &m_nStationsPrimary);
+    m_tree->Branch("min_measurement_stations_required", &m_minMeasurementStations);
+    m_tree->Branch("n_measurements_selected_primary", &m_nSelectedPrimaryMeasurements);
+    m_tree->Branch("n_measurement_stations_selected_primary",
+                   &m_nMeasurementStationsSelectedPrimary);
+    m_tree->Branch("sel_primary_measurement_reconstructable",
+                   &m_selPrimaryMeasurementReconstructable);
+    m_tree->Branch("sel_primary_has_seed", &m_selPrimaryHasSeed);
+    m_tree->Branch("sel_primary_has_unfiltered_track", &m_selPrimaryHasUnfilteredTrack);
+    m_tree->Branch("sel_primary_has_filtered_track", &m_selPrimaryHasFilteredTrack);
+    m_tree->Branch("sel_primary_has_truth_matched_track", &m_selPrimaryHasTruthMatchedTrack);
 
     bindTrackChain("trk_", m_ts);
     bindTrackChain("ckf_trk_", m_ckf);
@@ -478,6 +495,9 @@ void B0Trackers::Init() {
     m_tree->Branch("seed_survived_ambiguity", &vm_seed_survived_ambiguity);
     m_tree->Branch("seed_n_unfiltered_tracks", &vm_seed_n_unfiltered_tracks);
     m_tree->Branch("seed_n_filtered_tracks", &vm_seed_n_filtered_tracks);
+    m_tree->Branch("seed_assoc_mcIndex", &vm_seed_assoc_mcIndex);
+    m_tree->Branch("seed_assoc_mcCollectionID", &vm_seed_assoc_mcCollectionID);
+    m_tree->Branch("seed_assoc_weight", &vm_seed_assoc_weight);
     m_tree->Branch("truth_seed_quality", &vm_truth_seed_quality);
     m_tree->Branch("truth_seed_p", &vm_truth_seed_p);
     m_tree->Branch("truth_seed_qOverP", &vm_truth_seed_qOverP);
@@ -535,6 +555,7 @@ void B0Trackers::Init() {
     m_tree->Branch("has_ckf_acts_states", &m_hasCkfActsStates);
     m_tree->Branch("has_ckf_acts_tracks", &m_hasCkfActsTracks);
     m_tree->Branch("has_ckf_tracks_unfiltered", &m_hasCkfTracksUnfiltered);
+    m_tree->Branch("has_ckf_assocs_unfiltered", &m_hasCkfAssocsUnfiltered);
 
     m_geoSvc = app->GetService<DD4hep_service>();
     m_actsGeoSvc = app->GetService<ACTSGeo_service>();
@@ -731,6 +752,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     std::vector<const Acts::ConstVectorMultiTrajectory*> ckfActsTrackStates;
     std::vector<const Acts::ConstVectorTrackContainer*> ckfActsTracks;
     std::vector<const edm4eic::Track*> ckfUnfiltered;
+    std::vector<const edm4eic::MCRecoTrackParticleAssociation*> ckfUnfilteredAssocs;
     bool hasCkfTrackParams = false;
     bool hasCkfTrajectories = false;
     bool hasCkfTrajectoriesUnfiltered = false;
@@ -739,6 +761,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     bool hasCkfActsStates = false;
     bool hasCkfActsTracks = false;
     bool hasCkfTracksUnfiltered = false;
+    bool hasCkfAssocsUnfiltered = false;
     if (m_enableStubSeededChain) {
         hasCkfTrackParams = getOpt(event, "B0TrackerCKFTrackParameters", ckfTracks);
         hasCkfTrajectories = getOpt(event, "B0TrackerCKFTrajectories", ckfTrajectories);
@@ -747,6 +770,8 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         hasCkfTracks = getOpt(event, "B0TrackerCKFTracks", ckfEdmTracks);
         hasCkfAssocs = getOpt(event, "B0TrackerCKFTrackAssociations", ckfAssocs);
         hasCkfTracksUnfiltered = getOpt(event, "B0TrackerCKFTracksUnfiltered", ckfUnfiltered);
+        hasCkfAssocsUnfiltered = getOpt(
+            event, "B0TrackerCKFTrackUnfilteredAssociations", ckfUnfilteredAssocs);
         if (m_writeTrackStates) {
             hasCkfActsStates = getOpt(event, "B0TrackerCKFActsTrackStates", ckfActsTrackStates);
             hasCkfActsTracks = getOpt(event, "B0TrackerCKFActsTracks", ckfActsTracks);
@@ -774,6 +799,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     m_hasCkfActsStates           = hasCkfActsStates;
     m_hasCkfActsTracks           = hasCkfActsTracks;
     m_hasCkfTracksUnfiltered     = hasCkfTracksUnfiltered;
+    m_hasCkfAssocsUnfiltered     = hasCkfAssocsUnfiltered;
 
     m_eventNumber = event->GetEventNumber();
 
@@ -835,6 +861,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     vm_seed_momentum_resolved.clear(); vm_seed_became_track.clear();
     vm_seed_made_unfiltered_track.clear(); vm_seed_survived_ambiguity.clear();
     vm_seed_n_unfiltered_tracks.clear(); vm_seed_n_filtered_tracks.clear();
+    vm_seed_assoc_mcIndex.clear(); vm_seed_assoc_mcCollectionID.clear(); vm_seed_assoc_weight.clear();
     vm_truth_seed_quality.clear(); vm_truth_seed_p.clear(); vm_truth_seed_qOverP.clear();
     vm_truth_seed_theta.clear(); vm_truth_seed_phi.clear();
     vm_truth_seed_loc0.clear(); vm_truth_seed_loc1.clear();
@@ -857,6 +884,13 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     m_selPrimaryThscatMrad = nan;
     m_selPrimaryCharge = nan;
     m_nStationsPrimary = 0;
+    m_nSelectedPrimaryMeasurements = hasRawAssocs ? 0 : -1;
+    m_nMeasurementStationsSelectedPrimary = hasRawAssocs ? 0 : -1;
+    m_selPrimaryMeasurementReconstructable = hasRawAssocs ? 0 : -1;
+    m_selPrimaryHasSeed = 0;
+    m_selPrimaryHasUnfilteredTrack = 0;
+    m_selPrimaryHasFilteredTrack = 0;
+    m_selPrimaryHasTruthMatchedTrack = 0;
 
     beam_px.clear();  beam_py.clear();  beam_pz.clear(); beam_p.clear(); beam_pT.clear();
     beam_pdg.clear();
@@ -1013,6 +1047,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         int nContribMc = 0;
     };
     std::unordered_map<std::uint64_t, SimLink> simLinkByCell;
+    std::unordered_map<std::uint64_t, std::map<std::pair<std::uint32_t, int>, double>> cellParticleEDepByCell;
     {
         // (cellID, MC ObjectID) -> summed deposit.
         std::map<std::pair<std::uint64_t, std::pair<std::uint32_t, int>>, double> cellParticleEDep;
@@ -1026,6 +1061,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             const auto id  = particle.id();
             const auto cid = raw.getCellID();
             cellParticleEDep[{cid, {id.collectionID, id.index}}] += sim.getEDep();
+            cellParticleEDepByCell[cid][{id.collectionID, id.index}] += sim.getEDep();
             auto& link = simLinkByCell[cid];
             link.totalEDep += sim.getEDep();
             ++link.nContribSim;
@@ -1098,6 +1134,53 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 collectionID == m_selPrimaryMcCollectionID &&
                 index == m_selPrimaryMcIndex) ? 1 : 0;
     };
+
+    // A truth crossing is only geometrical acceptance. Reconstructability also
+    // requires digitized/reconstructed measurements attributable to the selected
+    // primary in enough distinct physical B0 stations. Build the measurement
+    // truth label from the summed truth composition of its constituent raw cells.
+    m_nSelectedPrimaryMeasurements = hasRawAssocs ? 0 : -1;
+    m_nMeasurementStationsSelectedPrimary = hasRawAssocs ? 0 : -1;
+    m_selPrimaryMeasurementReconstructable = hasRawAssocs ? 0 : -1;
+    if (hasRawAssocs && m_selPrimaryMcIndex >= 0) {
+        std::set<int> selectedMeasurementStations;
+        for (const auto* measurement : measurements) {
+            if (measurement == nullptr) continue;
+            std::map<std::pair<std::uint32_t, int>, double> measurementTruth;
+            std::set<std::uint64_t> seenCells;
+            std::set<int> measurementStations;
+            for (const auto& hit : measurement->getHits()) {
+                const auto raw = hit.getRawHit();
+                if (!raw.isAvailable()) continue;
+                const auto cid = static_cast<std::uint64_t>(raw.getCellID());
+                if (!seenCells.insert(cid).second) continue;
+                int plane = -1, module = -1, sensor = -1, side = -1;
+                decodeIds(cid, plane, module, sensor, side);
+                const int station = stationOf(plane);
+                if (station > 0) measurementStations.insert(station);
+                const auto truthIt = cellParticleEDepByCell.find(cid);
+                if (truthIt == cellParticleEDepByCell.end()) continue;
+                for (const auto& [mcId, edep] : truthIt->second) {
+                    measurementTruth[mcId] += edep;
+                }
+            }
+            if (measurementTruth.empty()) continue;
+            const auto dominant = std::max_element(
+                measurementTruth.begin(), measurementTruth.end(),
+                [](const auto& a, const auto& b) { return a.second < b.second; });
+            if (dominant == measurementTruth.end()) continue;
+            if (dominant->first.first != m_selPrimaryMcCollectionID ||
+                dominant->first.second != m_selPrimaryMcIndex) {
+                continue;
+            }
+            ++m_nSelectedPrimaryMeasurements;
+            selectedMeasurementStations.insert(measurementStations.begin(), measurementStations.end());
+        }
+        m_nMeasurementStationsSelectedPrimary =
+            static_cast<int>(selectedMeasurementStations.size());
+        m_selPrimaryMeasurementReconstructable =
+            m_nMeasurementStationsSelectedPrimary >= m_minMeasurementStations ? 1 : 0;
+    }
 
     for (const auto* h : simHits) {
         const auto mc = h->getParticle();
@@ -1514,29 +1597,116 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
               vm_truth_seed_made_unfiltered_track, vm_truth_seed_survived_ambiguity,
               vm_truth_seed_n_unfiltered_tracks, vm_truth_seed_n_filtered_tracks);
 
+    // Attribute each stub seed to MC truth from its constituent TrackerHits.
+    // Each hit/cell contributes one unit distributed among the cell's MC energy fractions,
+    // matching the per-measurement convention used by ActsToTracks.
+    for (const auto* seed : stubSeeds) {
+        std::map<std::pair<std::uint32_t, int>, double> weights;
+        if (seed != nullptr) {
+            for (std::size_t ih = 0; ih < seed->hits_size(); ++ih) {
+                const auto hit = seed->getHits(ih);
+                if (!hit.isAvailable()) continue;
+                const auto found = cellParticleEDepByCell.find(hit.getCellID());
+                if (found == cellParticleEDepByCell.end()) continue;
+                double total = 0.0;
+                for (const auto& [id, edep] : found->second) total += edep;
+                if (!(total > 0.0)) continue;
+                for (const auto& [id, edep] : found->second) weights[id] += edep / total;
+            }
+        }
+        int bestIndex = -1;
+        std::uint32_t bestCollection = 0;
+        double bestWeight = -1.0;
+        double totalWeight = 0.0;
+        for (const auto& [id, weight] : weights) {
+            totalWeight += weight;
+            if (weight > bestWeight) {
+                bestWeight = weight;
+                bestCollection = id.first;
+                bestIndex = id.second;
+            }
+        }
+        const double normalized = totalWeight > 0.0 ? bestWeight / totalWeight : nan;
+        vm_seed_assoc_mcIndex.push_back(bestIndex);
+        vm_seed_assoc_mcCollectionID.push_back(bestCollection);
+        vm_seed_assoc_weight.push_back(normalized);
+        if (bestIndex == m_selPrimaryMcIndex && bestCollection == m_selPrimaryMcCollectionID &&
+            m_selPrimaryMcIndex >= 0) {
+            m_selPrimaryHasSeed = 1;
+        }
+    }
+
+    const auto collectionHasSelectedPrimary = [this](const auto& assocs) {
+        std::map<std::pair<std::uint32_t, int>, std::tuple<double, std::uint32_t, int>> best;
+        for (const auto* assoc : assocs) {
+            if (assoc == nullptr) continue;
+            const auto rec = assoc->getRec();
+            const auto sim = assoc->getSim();
+            if (!rec.isAvailable() || !sim.isAvailable()) continue;
+            const auto rid = rec.id();
+            const auto sid = sim.id();
+            const auto key = std::make_pair(rid.collectionID, rid.index);
+            const double weight = assoc->getWeight();
+            const auto it = best.find(key);
+            if (it == best.end() || weight > std::get<0>(it->second)) {
+                best[key] = {weight, sid.collectionID, sid.index};
+            }
+        }
+        for (const auto& [key, value] : best) {
+            if (std::get<1>(value) == m_selPrimaryMcCollectionID &&
+                std::get<2>(value) == m_selPrimaryMcIndex && m_selPrimaryMcIndex >= 0) return true;
+        }
+        return false;
+    };
+    m_selPrimaryHasUnfilteredTrack =
+        hasCkfAssocsUnfiltered && collectionHasSelectedPrimary(ckfUnfilteredAssocs) ? 1 : 0;
+    m_selPrimaryHasFilteredTrack =
+        hasCkfAssocs && collectionHasSelectedPrimary(ckfAssocs) ? 1 : 0;
+
     auto fillChain = [&](TrackChain& out,
                          const auto& trajectories,
                          const auto& tracks,
                          const auto& edmTracks,
                          const auto& assocs,
                          const auto& actsTracks,
-                         const auto& actsStates) {
+                         const auto& actsStates,
+                         const auto& chainSeeds) {
         struct AssocHit {
             int mcIndex = -1;
             std::uint32_t mcCollectionID = 0;
             double weight = 0.0;
         };
-        std::unordered_map<int, AssocHit> bestAssoc;
+        std::map<std::pair<std::uint32_t, int>, AssocHit> bestAssoc;
         for (const auto* assoc : assocs) {
             if (assoc == nullptr) continue;
             const auto rec = assoc->getRec();
             const auto sim = assoc->getSim();
             if (!rec.isAvailable() || !sim.isAvailable()) continue;
-            const int recIndex = rec.id().index;
+            const auto recId = rec.id();
             const double weight = assoc->getWeight();
-            auto it = bestAssoc.find(recIndex);
+            const auto recKey = std::make_pair(recId.collectionID, recId.index);
+            auto it = bestAssoc.find(recKey);
             if (it == bestAssoc.end() || weight > it->second.weight) {
-                bestAssoc[recIndex] = {sim.id().index, sim.id().collectionID, weight};
+                bestAssoc[recKey] = {sim.id().index, sim.id().collectionID, weight};
+            }
+        }
+
+        std::map<std::pair<std::uint32_t, int>, const edm4eic::Track*> edmTrackByTrajectory;
+        std::map<std::pair<std::uint32_t, int>, std::vector<std::pair<std::uint32_t, int>>> trackObjectsBySeed;
+        std::map<std::pair<std::uint32_t, int>, int> pdgByTrackObject;
+        for (const auto* edmTrack : edmTracks) {
+            if (edmTrack == nullptr) continue;
+            const auto objectId = edmTrack->id();
+            pdgByTrackObject[{objectId.collectionID, objectId.index}] = edmTrack->getPdg();
+            const auto trajectory = edmTrack->getTrajectory();
+            if (!trajectory.isAvailable()) continue;
+            const auto trajectoryId = trajectory.id();
+            edmTrackByTrajectory[{trajectoryId.collectionID, trajectoryId.index}] = edmTrack;
+            const auto seed = trajectory.getSeed();
+            if (seed.isAvailable()) {
+                const auto seedId = seed.id();
+                trackObjectsBySeed[{seedId.collectionID, seedId.index}].push_back(
+                    {objectId.collectionID, objectId.index});
             }
         }
 
@@ -1593,9 +1763,9 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             auto tp = (trajectory->trackParameters_size() > 0)
                 ? trajectory->getTrackParameters(0)
                 : edm4eic::TrackParameters::makeEmpty();
-            if (!tp.isAvailable() && trajIndex < tracks.size() && tracks[trajIndex] != nullptr) {
-                tp = *tracks[trajIndex];
-            }
+            // Schema 3 never guesses trajectory identity from parallel collection
+            // positions. If the trajectory does not carry fitted parameters, leave
+            // this object unresolved rather than borrowing tracks[trajIndex].
             if (!tp.isAvailable()) continue;
 
             const float theta  = tp.getTheta();
@@ -1606,7 +1776,28 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             const int charge = (qOverP > 0.f) ? 1 : ((qOverP < 0.f) ? -1 : 0);
             const double deltaP = (momOk && std::isfinite(primaryP)) ? p - primaryP : nan;
             const double deltaPT = (std::isfinite(pT) && std::isfinite(primaryPT)) ? pT - primaryPT : nan;
-            const int currentTrackIndex = static_cast<int>(trajIndex);
+            const int currentTrackIndex = static_cast<int>(trajIndex); // legacy positional index
+            int objectIndex = -1;
+            std::uint32_t objectCollectionID = 0;
+            int seedIndex = -1;
+            std::uint32_t seedCollectionID = 0;
+            int identityValid = 0;
+            const auto trajectoryId = trajectory->id();
+            const auto stableTrackIt = edmTrackByTrajectory.find({trajectoryId.collectionID, trajectoryId.index});
+            const edm4eic::Track* stableEdmTrack =
+                stableTrackIt == edmTrackByTrajectory.end() ? nullptr : stableTrackIt->second;
+            if (stableEdmTrack != nullptr) {
+                const auto objectId = stableEdmTrack->id();
+                objectIndex = objectId.index;
+                objectCollectionID = objectId.collectionID;
+                identityValid = 1;
+            }
+            const auto trajectorySeed = trajectory->getSeed();
+            if (trajectorySeed.isAvailable()) {
+                const auto seedId = trajectorySeed.id();
+                seedIndex = seedId.index;
+                seedCollectionID = seedId.collectionID;
+            }
             const int nStates = static_cast<int>(trajectory->getNStates());
             const int nMeasurements = static_cast<int>(trajectory->getNMeasurements());
             const int nOutliers = static_cast<int>(trajectory->getNOutliers());
@@ -1616,18 +1807,20 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             double chi2 = nan;
             int ndf = -1;
             int pdg = 0;
-            if (trajIndex < edmTracks.size() && edmTracks[trajIndex] != nullptr) {
-                chi2 = edmTracks[trajIndex]->getChi2();
-                ndf = static_cast<int>(edmTracks[trajIndex]->getNdf());
-                pdg = edmTracks[trajIndex]->getPdg();
+            if (stableEdmTrack != nullptr) {
+                chi2 = stableEdmTrack->getChi2();
+                ndf = static_cast<int>(stableEdmTrack->getNdf());
+                pdg = stableEdmTrack->getPdg();
             }
             int assocMc = -1;
             std::uint32_t assocCol = 0;
             double assocW = 0.0;
-            if (const auto it = bestAssoc.find(currentTrackIndex); it != bestAssoc.end()) {
-                assocMc = it->second.mcIndex;
-                assocCol = it->second.mcCollectionID;
-                assocW = it->second.weight;
+            if (objectIndex >= 0) {
+                if (const auto it = bestAssoc.find({objectCollectionID, objectIndex}); it != bestAssoc.end()) {
+                    assocMc = it->second.mcIndex;
+                    assocCol = it->second.mcCollectionID;
+                    assocW = it->second.weight;
+                }
             }
 
             const auto& loc = tp.getLoc();
@@ -1678,6 +1871,17 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             out.ndf.push_back(ndf);
             out.charge.push_back(charge);
             out.index.push_back(currentTrackIndex);
+            out.object_index.push_back(objectIndex);
+            out.object_collectionID.push_back(objectCollectionID);
+            out.seed_index.push_back(seedIndex);
+            out.seed_collectionID.push_back(seedCollectionID);
+            out.identity_valid.push_back(identityValid);
+            {
+                int k = 0;
+                for (unsigned i = 0; i < 6; ++i) {
+                    for (unsigned j = i; j < 6; ++j) out.cov_upper[k++].push_back(cov(i, j));
+                }
+            }
             out.type.push_back(tp.getType());
             out.time.push_back(tp.getTime());
             out.pdg.push_back(pdg);
@@ -1695,6 +1899,10 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 assignBest(out.oracle, currentTrackIndex, p, pT, deltaP, deltaPT, theta, phi,
                            nStates, nMeasurements, nOutliers, nHoles, nSharedHits, chi2, ndf,
                            assocMc, assocW, pdg, charge, momOk ? 1 : 0, pullQ, pullTh, pullPh);
+                out.oracle.objectIndex = objectIndex; out.oracle.objectCollectionID = objectCollectionID;
+                out.oracle.seedIndex = seedIndex; out.oracle.seedCollectionID = seedCollectionID;
+                out.oracle.identityValid = identityValid;
+                out.oracle.assocMcCollectionID = assocCol;
             }
             if (truthAssoc) {
                 const bool better =
@@ -1709,6 +1917,12 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                     assignBest(out.truthMatched, currentTrackIndex, p, pT, deltaP, deltaPT, theta, phi,
                                nStates, nMeasurements, nOutliers, nHoles, nSharedHits, chi2, ndf,
                                assocMc, assocW, pdg, charge, momOk ? 1 : 0, pullQ, pullTh, pullPh);
+                    out.truthMatched.objectIndex = objectIndex;
+                    out.truthMatched.objectCollectionID = objectCollectionID;
+                    out.truthMatched.seedIndex = seedIndex;
+                    out.truthMatched.seedCollectionID = seedCollectionID;
+                    out.truthMatched.identityValid = identityValid;
+                    out.truthMatched.assocMcCollectionID = assocCol;
                 }
             }
             if (nMeasurements > 0) {
@@ -1725,6 +1939,12 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                     assignBest(out.recoBest, currentTrackIndex, p, pT, deltaP, deltaPT, theta, phi,
                                nStates, nMeasurements, nOutliers, nHoles, nSharedHits, chi2, ndf,
                                assocMc, assocW, pdg, charge, momOk ? 1 : 0, pullQ, pullTh, pullPh);
+                    out.recoBest.objectIndex = objectIndex;
+                    out.recoBest.objectCollectionID = objectCollectionID;
+                    out.recoBest.seedIndex = seedIndex;
+                    out.recoBest.seedCollectionID = seedCollectionID;
+                    out.recoBest.identityValid = identityValid;
+                    out.recoBest.assocMcCollectionID = assocCol;
                 }
             }
         }
@@ -1743,8 +1963,29 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                              Acts::detail::ConstRefHolder>
             trackContainer(*actsTracks.front(), *actsStates.front());
         const auto nActsTracks = static_cast<int>(trackContainer.size());
+        Acts::ConstProxyAccessor<unsigned int> seedNumber("seed");
         for (int actsTrackIndex = 0; actsTrackIndex < nActsTracks; ++actsTrackIndex) {
             const auto track = trackContainer.getTrack(actsTrackIndex);
+            int parentSeedIndex = -1;
+            std::uint32_t parentSeedCollectionID = 0;
+            try {
+                const auto seedPosition = static_cast<std::size_t>(seedNumber(track));
+                if (seedPosition < chainSeeds.size() && chainSeeds[seedPosition] != nullptr) {
+                    const auto seedId = chainSeeds[seedPosition]->id();
+                    parentSeedIndex = seedId.index;
+                    parentSeedCollectionID = seedId.collectionID;
+                }
+            } catch (...) {}
+            int parentTrackIndex = -1;
+            std::uint32_t parentTrackCollectionID = 0;
+            int parentIdentityValid = 0;
+            if (const auto found = trackObjectsBySeed.find({parentSeedCollectionID, parentSeedIndex});
+                parentSeedIndex >= 0 && found != trackObjectsBySeed.end() &&
+                found->second.size() == 1) {
+                parentTrackCollectionID = found->second.front().first;
+                parentTrackIndex = found->second.front().second;
+                parentIdentityValid = 1;
+            }
             const std::size_t stateBegin = out.state_index.size();
             int stateIndex = 0;
             for (const auto& state : track.trackStatesReversed()) {
@@ -1752,6 +1993,8 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                     continue;
                 }
 
+                const int estimateKind = b0trk::preferredEstimateKind(
+                    state.hasPredicted(), state.hasFiltered(), state.hasSmoothed());
                 const auto selectParams = [&state](auto&& fill) {
                     if (state.hasSmoothed()) {
                         fill(state.smoothed());
@@ -1774,8 +2017,71 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                     stateTheta = params[Acts::eBoundTheta];
                     statePhi = params[Acts::eBoundPhi];
                     stateQOverP = params[Acts::eBoundQOverP];
-                    stateTime = params[Acts::eBoundTime];
+                    stateTime = b0trk::nativeTimeToNs(params[Acts::eBoundTime], Acts::UnitConstants::ns);
                 });
+
+                double predLoc0 = nan, predLoc1 = nan, predTheta = nan, predPhi = nan;
+                double predQOverP = nan, predTime = nan;
+                std::array<double, 21> predCovUpper{};
+                predCovUpper.fill(nan);
+                int measDim = 0, proj0 = -1, proj1 = -1;
+                double measCov00 = nan, measCov01 = nan, measCov11 = nan;
+                double innov0 = nan, innov1 = nan, innovPull0 = nan, innovPull1 = nan, innovChi2 = nan;
+                if (state.hasPredicted()) {
+                    const auto pred = state.predicted();
+                    const auto predCov = state.predictedCovariance();
+                    predLoc0 = pred[Acts::eBoundLoc0]; predLoc1 = pred[Acts::eBoundLoc1];
+                    predPhi = pred[Acts::eBoundPhi]; predTheta = pred[Acts::eBoundTheta];
+                    predQOverP = pred[Acts::eBoundQOverP];
+                    predTime = b0trk::nativeTimeToNs(pred[Acts::eBoundTime], Acts::UnitConstants::ns);
+                    const std::array<double, 6> scale{
+                        1.0 / Acts::UnitConstants::mm, 1.0 / Acts::UnitConstants::mm,
+                        1.0 / Acts::UnitConstants::rad, 1.0 / Acts::UnitConstants::rad,
+                        Acts::UnitConstants::GeV, 1.0 / Acts::UnitConstants::ns};
+                    int k = 0;
+                    for (unsigned i = 0; i < 6; ++i) {
+                        for (unsigned j = i; j < 6; ++j) predCovUpper[k++] = predCov(i, j) * scale[i] * scale[j];
+                    }
+                    if (state.hasCalibrated()) {
+                        try {
+                            const auto meas = state.effectiveCalibrated();
+                            const auto measCov = state.effectiveCalibratedCovariance();
+                            const auto projector = state.projectorSubspaceIndices();
+                            measDim = static_cast<int>(state.calibratedSize());
+                            if (measDim > 0) {
+                                proj0 = static_cast<int>(projector[0]);
+                                measCov00 = measCov(0, 0);
+                                innov0 = meas[0] - pred[projector[0]];
+                            }
+                            if (measDim > 1) {
+                                proj1 = static_cast<int>(projector[1]);
+                                measCov01 = measCov(0, 1);
+                                measCov11 = measCov(1, 1);
+                                innov1 = meas[1] - pred[projector[1]];
+                            }
+                            if (measDim == 1) {
+                                const double s00 = measCov(0, 0) + predCov(projector[0], projector[0]);
+                                if (s00 > 0.0 && std::isfinite(s00)) {
+                                    innovPull0 = innov0 / std::sqrt(s00);
+                                    innovChi2 = innov0 * innov0 / s00;
+                                }
+                            } else if (measDim == 2) {
+                                Eigen::Matrix2d S;
+                                S(0, 0) = measCov(0, 0) + predCov(projector[0], projector[0]);
+                                S(0, 1) = measCov(0, 1) + predCov(projector[0], projector[1]);
+                                S(1, 0) = measCov(1, 0) + predCov(projector[1], projector[0]);
+                                S(1, 1) = measCov(1, 1) + predCov(projector[1], projector[1]);
+                                if (S.allFinite() && S(0, 0) > 0.0 && S(1, 1) > 0.0) {
+                                    innovPull0 = innov0 / std::sqrt(S(0, 0));
+                                    innovPull1 = innov1 / std::sqrt(S(1, 1));
+                                    const Eigen::Vector2d r(innov0, innov1);
+                                    const auto ldlt = S.ldlt();
+                                    if (ldlt.info() == Eigen::Success) innovChi2 = r.dot(ldlt.solve(r));
+                                }
+                            }
+                        } catch (...) {}
+                    }
+                }
 
                 const auto flags   = state.typeFlags();
                 const int typeMask = trackStateTypeMask(flags);
@@ -1805,19 +2111,19 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 if (surfIt != m_surfaceToSensorIdx.end()) {
                     sensorRef = &m_sensorRefs[surfIt->second];
                     mapping = b0trk::kMapExact;
-                    ++m_nSensorMapExact;
+                    ++out.nMapExact;
                 } else if (physicsState) {
                     const auto hit = closestSensor(globalX, globalY, globalZ);
                     if (hit.ref != nullptr && hit.outsideX == 0.0 && hit.outsideY == 0.0 &&
                         std::abs(hit.localZ) <= m_fallbackMaxNormalMm) {
                         sensorRef = hit.ref;
                         mapping = b0trk::kMapFallback;
-                        ++m_nSensorMapFallback;
+                        ++out.nMapFallback;
                     } else {
-                        ++m_nSensorMapFailed;
+                        ++out.nMapFailedPhysics;
                     }
                 } else {
-                    ++m_nSensorMapFailed;
+                    ++out.nMapUnmappedNonPhysics;
                 }
 
                 PixelSnap trackPixel{};
@@ -1851,6 +2157,12 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 }
 
                 out.state_track_index.push_back(actsTrackIndex);
+                out.state_parent_seed_index.push_back(parentSeedIndex);
+                out.state_parent_seed_collectionID.push_back(parentSeedCollectionID);
+                out.state_parent_track_index.push_back(parentTrackIndex);
+                out.state_parent_track_collectionID.push_back(parentTrackCollectionID);
+                out.state_parent_identity_valid.push_back(parentIdentityValid);
+                out.state_estimate_kind.push_back(estimateKind);
                 out.state_index.push_back(stateIndex++);
                 out.state_acts_index.push_back(static_cast<int>(state.index()));
                 out.state_type.push_back(typeMask);
@@ -1862,6 +2174,17 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 out.state_meas_loc1.push_back(measLoc1);
                 out.state_resid_loc0.push_back(resid0);
                 out.state_resid_loc1.push_back(resid1);
+                out.state_meas_dim.push_back(measDim);
+                out.state_proj_index0.push_back(proj0); out.state_proj_index1.push_back(proj1);
+                out.state_meas_cov00.push_back(measCov00); out.state_meas_cov01.push_back(measCov01);
+                out.state_meas_cov11.push_back(measCov11);
+                out.state_pred_loc0.push_back(predLoc0); out.state_pred_loc1.push_back(predLoc1);
+                out.state_pred_theta.push_back(predTheta); out.state_pred_phi.push_back(predPhi);
+                out.state_pred_qOverP.push_back(predQOverP); out.state_pred_time.push_back(predTime);
+                for (std::size_t k = 0; k < predCovUpper.size(); ++k) out.state_pred_cov_upper[k].push_back(predCovUpper[k]);
+                out.state_innov0.push_back(innov0); out.state_innov1.push_back(innov1);
+                out.state_innov_pull0.push_back(innovPull0); out.state_innov_pull1.push_back(innovPull1);
+                out.state_innov_chi2.push_back(innovChi2);
                 out.x_on_plane.push_back(globalX);
                 out.y_on_plane.push_back(globalY);
                 out.z_on_plane.push_back(globalZ);
@@ -1884,10 +2207,12 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 out.state_phi.push_back(statePhi);
                 out.state_qOverP.push_back(stateQOverP);
                 out.state_time.push_back(stateTime);
-                out.state_pdg.push_back(
-                    (actsTrackIndex >= 0 && static_cast<std::size_t>(actsTrackIndex) < out.pdg.size())
-                        ? out.pdg[static_cast<std::size_t>(actsTrackIndex)]
-                        : 0);
+                int statePdg = 0;
+                if (parentIdentityValid) {
+                    if (const auto found = pdgByTrackObject.find({parentTrackCollectionID, parentTrackIndex});
+                        found != pdgByTrackObject.end()) statePdg = found->second;
+                }
+                out.state_pdg.push_back(statePdg);
             }
             const int nPushed = stateIndex;
             for (int i = 0; i < nPushed; ++i) {
@@ -1896,8 +2221,14 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         }
     };
 
-    fillChain(m_ts, tsTrajectories, tsTracks, tsEdmTracks, tsAssocs, tsActsTracks, tsActsTrackStates);
-    fillChain(m_ckf, ckfTrajectories, ckfTracks, ckfEdmTracks, ckfAssocs, ckfActsTracks, ckfActsTrackStates);
+    fillChain(m_ts, tsTrajectories, tsTracks, tsEdmTracks, tsAssocs, tsActsTracks,
+              tsActsTrackStates, truthSeeds);
+    fillChain(m_ckf, ckfTrajectories, ckfTracks, ckfEdmTracks, ckfAssocs, ckfActsTracks,
+              ckfActsTrackStates, stubSeeds);
+    m_selPrimaryHasTruthMatchedTrack = m_ckf.truthMatched.index >= 0 ? 1 : 0;
+    m_nSensorMapExact = m_ts.nMapExact + m_ckf.nMapExact;
+    m_nSensorMapFallback = m_ts.nMapFallback + m_ckf.nMapFallback;
+    m_nSensorMapFailed = m_ts.nMapFailedPhysics + m_ckf.nMapFailedPhysics;
 
     m_tree->Fill();
 }
@@ -1911,6 +2242,8 @@ void B0Trackers::BestSel::reset(double nan) {
     nSharedHits = -1;
     ndf = -1;
     assocMcIndex = -1;
+    assocMcCollectionID = 0;
+    objectIndex = -1; objectCollectionID = 0; seedIndex = -1; seedCollectionID = 0; identityValid = 0;
     pdg = 0;
     charge = 0;
     momentumResolved = 0;
@@ -1938,14 +2271,28 @@ void B0Trackers::TrackChain::clear(double nan) {
     pull_qOverP.clear(); pull_theta.clear(); pull_phi.clear();
     chi2.clear(); ndf.clear();
     index.clear(); charge.clear(); type.clear(); pdg.clear();
+    object_index.clear(); object_collectionID.clear(); seed_index.clear(); seed_collectionID.clear();
+    identity_valid.clear();
+    for (auto& v : cov_upper) v.clear();
     nStates.clear(); nMeasurements.clear(); nOutliers.clear(); nHoles.clear(); nSharedHits.clear();
     assoc_mcIndex.clear(); assoc_mcCollectionID.clear(); assoc_weight.clear();
     state_track_index.clear(); state_index.clear(); state_acts_index.clear();
+    state_parent_seed_index.clear(); state_parent_seed_collectionID.clear();
+    state_parent_track_index.clear();
+    state_parent_track_collectionID.clear(); state_parent_identity_valid.clear();
+    state_estimate_kind.clear();
     state_type.clear(); state_pdg.clear(); state_mapping_method.clear();
     state_surface.clear();
     state_loc0.clear(); state_loc1.clear();
     state_meas_loc0.clear(); state_meas_loc1.clear();
     state_resid_loc0.clear(); state_resid_loc1.clear();
+    state_meas_dim.clear(); state_proj_index0.clear(); state_proj_index1.clear();
+    state_meas_cov00.clear(); state_meas_cov01.clear(); state_meas_cov11.clear();
+    state_pred_loc0.clear(); state_pred_loc1.clear(); state_pred_theta.clear(); state_pred_phi.clear();
+    state_pred_qOverP.clear(); state_pred_time.clear();
+    for (auto& v : state_pred_cov_upper) v.clear();
+    state_innov0.clear(); state_innov1.clear(); state_innov_pull0.clear(); state_innov_pull1.clear();
+    state_innov_chi2.clear();
     x_on_plane.clear(); y_on_plane.clear(); z_on_plane.clear();
     aclgad_xPix.clear(); aclgad_yPix.clear(); aclgad_zPix.clear();
     aclgad_dx.clear(); aclgad_dy.clear(); aclgad_dz.clear();
@@ -1957,6 +2304,7 @@ void B0Trackers::TrackChain::clear(double nan) {
     oracle.reset(nan);
     truthMatched.reset(nan);
     recoBest.reset(nan);
+    nMapExact = 0; nMapFallback = 0; nMapFailedPhysics = 0; nMapUnmappedNonPhysics = 0;
     hasTrack = 0;
 }
 
@@ -1979,6 +2327,12 @@ void B0Trackers::bindBestSel(const std::string& prefix, BestSel& b) {
     br(prefix + "chi2", &b.chi2);
     br(prefix + "ndf", &b.ndf);
     br(prefix + "assoc_mcIndex", &b.assocMcIndex);
+    br(prefix + "assoc_mcCollectionID", &b.assocMcCollectionID);
+    br(prefix + "object_index", &b.objectIndex);
+    br(prefix + "object_collectionID", &b.objectCollectionID);
+    br(prefix + "seed_index", &b.seedIndex);
+    br(prefix + "seed_collectionID", &b.seedCollectionID);
+    br(prefix + "identity_valid", &b.identityValid);
     br(prefix + "assoc_weight", &b.assocWeight);
     br(prefix + "pdg", &b.pdg);
     br(prefix + "charge", &b.charge);
@@ -2018,6 +2372,18 @@ void B0Trackers::bindTrackChain(const std::string& trkPrefix, TrackChain& c) {
     br(trkPrefix + "ndf", &c.ndf);
     br(trkPrefix + "charge", &c.charge);
     br(trkPrefix + "index", &c.index);
+    br(trkPrefix + "object_index", &c.object_index);
+    br(trkPrefix + "object_collectionID", &c.object_collectionID);
+    br(trkPrefix + "seed_index", &c.seed_index);
+    br(trkPrefix + "seed_collectionID", &c.seed_collectionID);
+    br(trkPrefix + "identity_valid", &c.identity_valid);
+    {
+        static const std::array<std::pair<int,int>,21> ij{{
+            {0,0},{0,1},{0,2},{0,3},{0,4},{0,5},{1,1},{1,2},{1,3},{1,4},{1,5},
+            {2,2},{2,3},{2,4},{2,5},{3,3},{3,4},{3,5},{4,4},{4,5},{5,5}}};
+        for (std::size_t k = 0; k < ij.size(); ++k)
+            br(trkPrefix + "cov_" + std::to_string(ij[k].first) + std::to_string(ij[k].second), &c.cov_upper[k]);
+    }
     br(trkPrefix + "type", &c.type);
     br(trkPrefix + "time", &c.time);
     br(trkPrefix + "pdg", &c.pdg);
@@ -2030,6 +2396,12 @@ void B0Trackers::bindTrackChain(const std::string& trkPrefix, TrackChain& c) {
     br(trkPrefix + "assoc_mcCollectionID", &c.assoc_mcCollectionID);
     br(trkPrefix + "assoc_weight", &c.assoc_weight);
     br(trkPrefix + "state_track_index", &c.state_track_index);
+    br(trkPrefix + "state_parent_seed_index", &c.state_parent_seed_index);
+    br(trkPrefix + "state_parent_seed_collectionID", &c.state_parent_seed_collectionID);
+    br(trkPrefix + "state_parent_track_index", &c.state_parent_track_index);
+    br(trkPrefix + "state_parent_track_collectionID", &c.state_parent_track_collectionID);
+    br(trkPrefix + "state_parent_identity_valid", &c.state_parent_identity_valid);
+    br(trkPrefix + "state_estimate_kind", &c.state_estimate_kind);
     br(trkPrefix + "state_index", &c.state_index);
     br(trkPrefix + "state_acts_index", &c.state_acts_index);
     br(trkPrefix + "state_type", &c.state_type);
@@ -2041,6 +2413,23 @@ void B0Trackers::bindTrackChain(const std::string& trkPrefix, TrackChain& c) {
     br(trkPrefix + "state_meas_loc1", &c.state_meas_loc1);
     br(trkPrefix + "state_resid_loc0", &c.state_resid_loc0);
     br(trkPrefix + "state_resid_loc1", &c.state_resid_loc1);
+    br(trkPrefix + "state_meas_dim", &c.state_meas_dim);
+    br(trkPrefix + "state_proj_index0", &c.state_proj_index0); br(trkPrefix + "state_proj_index1", &c.state_proj_index1);
+    br(trkPrefix + "state_meas_cov00", &c.state_meas_cov00); br(trkPrefix + "state_meas_cov01", &c.state_meas_cov01);
+    br(trkPrefix + "state_meas_cov11", &c.state_meas_cov11);
+    br(trkPrefix + "state_pred_loc0", &c.state_pred_loc0); br(trkPrefix + "state_pred_loc1", &c.state_pred_loc1);
+    br(trkPrefix + "state_pred_theta", &c.state_pred_theta); br(trkPrefix + "state_pred_phi", &c.state_pred_phi);
+    br(trkPrefix + "state_pred_qOverP", &c.state_pred_qOverP); br(trkPrefix + "state_pred_time", &c.state_pred_time);
+    {
+        static const std::array<std::pair<int,int>,21> ij{{
+            {0,0},{0,1},{0,2},{0,3},{0,4},{0,5},{1,1},{1,2},{1,3},{1,4},{1,5},
+            {2,2},{2,3},{2,4},{2,5},{3,3},{3,4},{3,5},{4,4},{4,5},{5,5}}};
+        for (std::size_t k = 0; k < ij.size(); ++k)
+            br(trkPrefix + "state_pred_cov_" + std::to_string(ij[k].first) + std::to_string(ij[k].second), &c.state_pred_cov_upper[k]);
+    }
+    br(trkPrefix + "state_innov0", &c.state_innov0); br(trkPrefix + "state_innov1", &c.state_innov1);
+    br(trkPrefix + "state_innov_pull0", &c.state_innov_pull0); br(trkPrefix + "state_innov_pull1", &c.state_innov_pull1);
+    br(trkPrefix + "state_innov_chi2", &c.state_innov_chi2);
     br(trkPrefix + "x_on_plane", &c.x_on_plane);
     br(trkPrefix + "y_on_plane", &c.y_on_plane);
     br(trkPrefix + "z_on_plane", &c.z_on_plane);
@@ -2064,6 +2453,10 @@ void B0Trackers::bindTrackChain(const std::string& trkPrefix, TrackChain& c) {
     br(trkPrefix + "state_qOverP", &c.state_qOverP);
     br(trkPrefix + "state_time", &c.state_time);
     br(trkPrefix + "state_pdg", &c.state_pdg);
+    br(trkPrefix + "n_sensor_map_exact", &c.nMapExact);
+    br(trkPrefix + "n_sensor_map_fallback", &c.nMapFallback);
+    br(trkPrefix + "n_sensor_map_failed_physics", &c.nMapFailedPhysics);
+    br(trkPrefix + "n_sensor_map_unmapped_nonphysics", &c.nMapUnmappedNonPhysics);
     br(trkPrefix + "has_track", &c.hasTrack);
     bindBestSel(trkPrefix == "trk_" ? "oracle_best_trk_" : "ckf_oracle_best_trk_", c.oracle);
     bindBestSel(trkPrefix == "trk_" ? "best_trk_" : "ckf_best_trk_", c.oracle);

@@ -10,13 +10,40 @@
 
 namespace b0trk {
 
-inline constexpr int kSchemaVersion = 2;
+inline constexpr int kSchemaVersion = 3;
 
 inline constexpr int kMapUnresolved = 0;
 inline constexpr int kMapExact      = 1;
 inline constexpr int kMapFallback   = 2;
 
+enum StateEstimateKind {
+    kEstimateNone      = 0,
+    kEstimatePredicted = 1,
+    kEstimateFiltered  = 2,
+    kEstimateSmoothed  = 3,
+};
+
 inline double quietNaN() { return std::numeric_limits<double>::quiet_NaN(); }
+
+inline int preferredEstimateKind(bool hasPredicted, bool hasFiltered, bool hasSmoothed) {
+    if (hasSmoothed) {
+        return kEstimateSmoothed;
+    }
+    if (hasFiltered) {
+        return kEstimateFiltered;
+    }
+    if (hasPredicted) {
+        return kEstimatePredicted;
+    }
+    return kEstimateNone;
+}
+
+inline double nativeTimeToNs(double nativeTime, double actsNsUnit) {
+    if (!std::isfinite(nativeTime) || !std::isfinite(actsNsUnit) || actsNsUnit == 0.0) {
+        return quietNaN();
+    }
+    return nativeTime / actsNsUnit;
+}
 
 // q/p == 0 is unbounded momentum, not p = 0.
 inline std::pair<double, bool> momentumFromQOverP(double qOverP) {

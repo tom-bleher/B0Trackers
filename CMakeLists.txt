@@ -48,15 +48,32 @@ if(BUILD_TESTING)
 
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
+        # Run test files directly and pin PYTHONPATH to this source tree. This
+        # avoids both a foreign top-level `tests` package and environment-specific
+        # import-path behavior inside eic-shell.
         add_test(
             NAME B0TrackersMetrics
-            COMMAND ${Python3_EXECUTABLE} -m unittest -v tests/test_b0_metrics.py
+            COMMAND ${CMAKE_COMMAND} -E env
+                "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
+                ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_b0_metrics.py
         )
         add_test(
             NAME B0TrackersReportIntegration
-            COMMAND ${Python3_EXECUTABLE} -m unittest -v tests/test_b0_report_integration.py
+            COMMAND ${CMAKE_COMMAND} -E env
+                "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
+                ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_b0_report_integration.py
         )
-        set_tests_properties(B0TrackersMetrics B0TrackersReportIntegration PROPERTIES
-            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(
+            NAME B0TrackersIdentityInvariants
+            COMMAND ${CMAKE_COMMAND} -E env
+                "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
+                ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_identity_invariants.py
+        )
+        set_tests_properties(
+            B0TrackersMetrics
+            B0TrackersReportIntegration
+            B0TrackersIdentityInvariants
+            PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        )
     endif()
 endif()
