@@ -10,6 +10,7 @@ on:
 permissions:
   contents: read
 
+# Temporary dependency-light validation for the reconciled reporting branch.
 jobs:
   dependency-light:
     runs-on: ubuntu-24.04
