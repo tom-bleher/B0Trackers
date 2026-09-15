@@ -124,6 +124,7 @@ class B0ReportIntegrationTest(unittest.TestCase):
                     "has_ckf_tracks_unfiltered": np.array([True]),
                     "has_ckf_tracks": np.array([True]),
                     "has_ckf_assocs": np.array([True]),
+                    "has_ckf_assocs_unfiltered": np.array([True]),
                     "ckf_trk_state_resid_loc0": ak.Array([[0.01, 0.50, 0.02]]),
                     "ckf_trk_state_resid_loc1": ak.Array([[0.02, 0.40, -0.01]]),
                     "ckf_trk_state_type": ak.Array([[1, 1, 1]]),
