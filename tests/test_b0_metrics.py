@@ -64,6 +64,29 @@ class B0MetricsTest(unittest.TestCase):
         self.assertEqual(len(mismatches), 1)
         self.assertEqual(mismatches[0]["path"], "provenance.geometry")
 
+    def test_provenance_reports_which_manifest_side_is_missing(self):
+        baseline = {"provenance": {"manifest": {"input_sha256": "abc"}}}
+        candidate = {"provenance": {"manifest": {}}}
+        mismatches = provenance_mismatches(
+            baseline,
+            candidate,
+            ["provenance.manifest.input_sha256"],
+        )
+        self.assertEqual(len(mismatches), 1)
+        self.assertEqual(mismatches[0]["baseline"], "abc")
+        self.assertEqual(mismatches[0]["candidate"], "<missing>")
+
+    def test_material_map_hash_is_a_provenance_mismatch(self):
+        baseline = {"provenance": {"manifest": {"material_map_sha256": "map-a"}}}
+        candidate = {"provenance": {"manifest": {"material_map_sha256": "map-b"}}}
+        mismatches = provenance_mismatches(
+            baseline,
+            candidate,
+            ["provenance.manifest.material_map_sha256"],
+        )
+        self.assertEqual(len(mismatches), 1)
+        self.assertEqual(mismatches[0]["path"], "provenance.manifest.material_map_sha256")
+
     def test_regression_policy(self):
         baseline = {"metrics": {"eff": 0.90, "sigma": 0.10}}
         candidate = {"metrics": {"eff": 0.88, "sigma": 0.105}}
