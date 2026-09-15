@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 # Temporary integration validation for the schema3 + runtime-controls reconciliation.
-# Rerun after making scalar ROOT reads portable across TTrees and RNTuples.
+# Rerun after restoring the full report and applying only the RNTuple scalar-read fix.
 jobs:
   dependency-light:
     runs-on: ubuntu-24.04
