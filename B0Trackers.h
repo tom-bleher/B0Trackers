@@ -57,6 +57,9 @@ private:
     double m_fallbackMaxNormalMm = 2.0;
     bool m_failOnEmptySensorMap = true;
     bool m_failOnIncompleteSurfaceMap = false;
+    bool m_enableTruthSeededChain = true;
+    bool m_enableStubSeededChain = true;
+    bool m_writeTrackStates = true;
 
     struct SensorRef {
         std::uint64_t cellID = 0;
