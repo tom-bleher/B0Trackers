@@ -38,6 +38,26 @@ DEFAULT_COMPATIBILITY_PATHS = [
     "selection.min_stations",
 ]
 
+# These describe the physics sample/environment and should normally stay fixed
+# when a candidate reconstruction implementation is compared with a baseline.
+# Software commits are deliberately *not* listed here because changing them is
+# commonly the point of the comparison.
+MANIFEST_COMPATIBILITY_PATHS = [
+    "provenance.manifest.input_sha256",
+    "provenance.manifest.events",
+    "provenance.manifest.primary_pdg",
+    "provenance.manifest.primary_status",
+    "provenance.manifest.detector_config",
+    "provenance.manifest.epic_commit",
+    "provenance.manifest.material_map_sha256",
+    "provenance.manifest.reconstruction_args",
+]
+
+
+def _manifest(report: dict) -> dict:
+    value = report.get("provenance", {}).get("manifest", {})
+    return value if isinstance(value, dict) else {}
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -51,7 +71,7 @@ def main() -> int:
     parser.add_argument(
         "--allow-incompatible",
         action="store_true",
-        help="compare even if schema/geometry/selection provenance differs",
+        help="compare even if schema/sample/geometry/material/config provenance differs",
     )
     args = parser.parse_args()
 
@@ -64,6 +84,14 @@ def main() -> int:
         checks = policy["checks"]
         compatibility_paths.extend(policy.get("compatibility_paths", []))
 
+    baseline_manifest = _manifest(baseline)
+    candidate_manifest = _manifest(candidate)
+    if baseline_manifest or candidate_manifest:
+        # If either report opts into a reproducibility manifest, require both and
+        # compare the sample/environment fields that must remain fixed for an
+        # apples-to-apples regression test.
+        compatibility_paths.extend(MANIFEST_COMPATIBILITY_PATHS)
+
     compatibility_paths = list(dict.fromkeys(compatibility_paths))
     mismatches = provenance_mismatches(baseline, candidate, compatibility_paths)
     if mismatches and not args.allow_incompatible:
@@ -73,6 +101,12 @@ def main() -> int:
             print(json.dumps(mismatch, sort_keys=True))
         print("Use --allow-incompatible only for an intentional cross-configuration comparison.")
         return 3
+
+    if not baseline_manifest and not candidate_manifest:
+        print(
+            "warning: neither report contains a run manifest; only embedded schema/geometry/selection "
+            "provenance can be checked"
+        )
 
     print(f"{'metric':56} {'baseline':>12} {'candidate':>12}")
     print("-" * 84)
