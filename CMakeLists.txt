@@ -48,27 +48,21 @@ if(BUILD_TESTING)
 
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
-        # Execute the test files directly instead of asking unittest to import
-        # them as tests.* modules. Some EIC shell Python environments provide an
-        # unrelated top-level `tests` package, which can shadow this repository's
-        # tests directory even when CTest's working directory is correct.
-        add_test(
-            NAME B0TrackersMetrics
-            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_b0_metrics.py
-        )
-        add_test(
-            NAME B0TrackersReportIntegration
-            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_b0_report_integration.py
-        )
-        add_test(
-            NAME B0TrackersIdentityInvariants
-            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_identity_invariants.py
-        )
-        set_tests_properties(
-            B0TrackersMetrics
-            B0TrackersReportIntegration
-            B0TrackersIdentityInvariants
-            PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        )
+        # Run test files directly and pin PYTHONPATH to this source tree. This
+        # avoids both a foreign top-level `tests` package and environment-specific
+        # import-path behavior inside eic-shell.
+        foreach(test_name test_file IN ITEMS
+                B0TrackersMetrics test_b0_metrics.py
+                B0TrackersReportIntegration test_b0_report_integration.py
+                B0TrackersIdentityInvariants test_identity_invariants.py)
+            add_test(
+                NAME ${test_name}
+                COMMAND ${CMAKE_COMMAND} -E env
+                    "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
+                    ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${test_file}
+            )
+            set_tests_properties(${test_name} PROPERTIES
+                WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        endforeach()
     endif()
 endif()
