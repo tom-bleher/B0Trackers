@@ -1,0 +1,30 @@
+name: Apply full selected-primary funnel
+
+on:
+  push:
+    branches: [feat/phase-space-provenance]
+    paths:
+      - tools/add_full_selected_primary_funnel.py
+      - .github/workflows/apply-full-selected-primary-funnel.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/phase-space-provenance
+          fetch-depth: 0
+      - run: python3 tools/add_full_selected_primary_funnel.py
+      - run: git rm tools/add_full_selected_primary_funnel.py .github/workflows/apply-full-selected-primary-funnel.yml
+      - name: Commit full funnel support
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "feat(report): add measurement-aware selected-primary funnel"
+          git push origin HEAD:feat/phase-space-provenance
