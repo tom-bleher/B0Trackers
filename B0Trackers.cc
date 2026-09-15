@@ -187,6 +187,12 @@ void B0Trackers::Init() {
     app->SetDefaultParameter("B0Trackers:fail_on_incomplete_surface_map",
                              m_failOnIncompleteSurfaceMap,
                              "Throw in Init unless every B0 sensor maps to an ACTS surface");
+    app->SetDefaultParameter("B0Trackers:enable_truth_seeded_chain", m_enableTruthSeededChain,
+                             "Request and analyze the truth-seeded B0 CKF chain");
+    app->SetDefaultParameter("B0Trackers:enable_stub_seeded_chain", m_enableStubSeededChain,
+                             "Request and analyze the stub-seeded B0 CKF chain");
+    app->SetDefaultParameter("B0Trackers:write_track_states", m_writeTrackStates,
+                             "Request ACTS track containers and write per-state diagnostics");
 
     if (const char* cfg = std::getenv("DETECTOR_CONFIG")) {
         m_geometryName = cfg;
@@ -232,6 +238,9 @@ void B0Trackers::Init() {
     m_tree->Branch("geometry_name", &m_geometryName);
     m_tree->Branch("detector_path", &m_detectorPath);
     m_tree->Branch("eventNumber", &m_eventNumber);
+    m_tree->Branch("config_enable_truth_seeded_chain", &m_enableTruthSeededChain);
+    m_tree->Branch("config_enable_stub_seeded_chain", &m_enableStubSeededChain);
+    m_tree->Branch("config_write_track_states", &m_writeTrackStates);
 
     m_tree->Branch("xR",        &vm_xR);
     m_tree->Branch("yR",        &vm_yR);
@@ -679,8 +688,10 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     std::vector<const edm4eic::TrackSeed*> truthSeeds;
     const bool hasRawAssocs =
         getOpt(event, "B0TrackerRawHitAssociations", rawAssocs);
-    const bool hasStubSeeds  = getOpt(event, "B0TrackerSeeds", stubSeeds);
-    const bool hasTruthSeeds = getOpt(event, "B0TrackerTruthSeeds", truthSeeds);
+    bool hasStubSeeds = false;
+    bool hasTruthSeeds = false;
+    if (m_enableStubSeededChain) hasStubSeeds = getOpt(event, "B0TrackerSeeds", stubSeeds);
+    if (m_enableTruthSeededChain) hasTruthSeeds = getOpt(event, "B0TrackerTruthSeeds", truthSeeds);
 
     std::vector<const edm4eic::TrackParameters*> tsTracks;
     std::vector<const edm4eic::Trajectory*> tsTrajectories;
@@ -690,21 +701,27 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     std::vector<const Acts::ConstVectorMultiTrajectory*> tsActsTrackStates;
     std::vector<const Acts::ConstVectorTrackContainer*> tsActsTracks;
     std::vector<const edm4eic::Track*> tsUnfiltered;
-    const bool hasTsTrackParams =
-        getOpt(event, "B0TrackerCKFTruthSeededTrackParameters", tsTracks);
-    const bool hasTsTrajectories =
-        getOpt(event, "B0TrackerCKFTruthSeededTrajectories", tsTrajectories);
-    const bool hasTsTrajectoriesUnfiltered =
-        getOpt(event, "B0TrackerCKFTruthSeededTrajectoriesUnfiltered", tsTrajectoriesUnfiltered);
-    const bool hasTsTracks = getOpt(event, "B0TrackerCKFTruthSeededTracks", tsEdmTracks);
-    const bool hasTsAssocs =
-        getOpt(event, "B0TrackerCKFTruthSeededTrackAssociations", tsAssocs);
-    const bool hasTsActsStates =
-        getOpt(event, "B0TrackerCKFTruthSeededActsTrackStates", tsActsTrackStates);
-    const bool hasTsActsTracks =
-        getOpt(event, "B0TrackerCKFTruthSeededActsTracks", tsActsTracks);
-    const bool hasTsTracksUnfiltered =
-        getOpt(event, "B0TrackerCKFTruthSeededTracksUnfiltered", tsUnfiltered);
+    bool hasTsTrackParams = false;
+    bool hasTsTrajectories = false;
+    bool hasTsTrajectoriesUnfiltered = false;
+    bool hasTsTracks = false;
+    bool hasTsAssocs = false;
+    bool hasTsActsStates = false;
+    bool hasTsActsTracks = false;
+    bool hasTsTracksUnfiltered = false;
+    if (m_enableTruthSeededChain) {
+        hasTsTrackParams = getOpt(event, "B0TrackerCKFTruthSeededTrackParameters", tsTracks);
+        hasTsTrajectories = getOpt(event, "B0TrackerCKFTruthSeededTrajectories", tsTrajectories);
+        hasTsTrajectoriesUnfiltered = getOpt(
+            event, "B0TrackerCKFTruthSeededTrajectoriesUnfiltered", tsTrajectoriesUnfiltered);
+        hasTsTracks = getOpt(event, "B0TrackerCKFTruthSeededTracks", tsEdmTracks);
+        hasTsAssocs = getOpt(event, "B0TrackerCKFTruthSeededTrackAssociations", tsAssocs);
+        hasTsTracksUnfiltered = getOpt(event, "B0TrackerCKFTruthSeededTracksUnfiltered", tsUnfiltered);
+        if (m_writeTrackStates) {
+            hasTsActsStates = getOpt(event, "B0TrackerCKFTruthSeededActsTrackStates", tsActsTrackStates);
+            hasTsActsTracks = getOpt(event, "B0TrackerCKFTruthSeededActsTracks", tsActsTracks);
+        }
+    }
 
     std::vector<const edm4eic::TrackParameters*> ckfTracks;
     std::vector<const edm4eic::Trajectory*> ckfTrajectories;
@@ -714,18 +731,27 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     std::vector<const Acts::ConstVectorMultiTrajectory*> ckfActsTrackStates;
     std::vector<const Acts::ConstVectorTrackContainer*> ckfActsTracks;
     std::vector<const edm4eic::Track*> ckfUnfiltered;
-    const bool hasCkfTrackParams =
-        getOpt(event, "B0TrackerCKFTrackParameters", ckfTracks);
-    const bool hasCkfTrajectories = getOpt(event, "B0TrackerCKFTrajectories", ckfTrajectories);
-    const bool hasCkfTrajectoriesUnfiltered =
-        getOpt(event, "B0TrackerCKFTrajectoriesUnfiltered", ckfTrajectoriesUnfiltered);
-    const bool hasCkfTracks  = getOpt(event, "B0TrackerCKFTracks", ckfEdmTracks);
-    const bool hasCkfAssocs  = getOpt(event, "B0TrackerCKFTrackAssociations", ckfAssocs);
-    const bool hasCkfActsStates =
-        getOpt(event, "B0TrackerCKFActsTrackStates", ckfActsTrackStates);
-    const bool hasCkfActsTracks = getOpt(event, "B0TrackerCKFActsTracks", ckfActsTracks);
-    const bool hasCkfTracksUnfiltered =
-        getOpt(event, "B0TrackerCKFTracksUnfiltered", ckfUnfiltered);
+    bool hasCkfTrackParams = false;
+    bool hasCkfTrajectories = false;
+    bool hasCkfTrajectoriesUnfiltered = false;
+    bool hasCkfTracks = false;
+    bool hasCkfAssocs = false;
+    bool hasCkfActsStates = false;
+    bool hasCkfActsTracks = false;
+    bool hasCkfTracksUnfiltered = false;
+    if (m_enableStubSeededChain) {
+        hasCkfTrackParams = getOpt(event, "B0TrackerCKFTrackParameters", ckfTracks);
+        hasCkfTrajectories = getOpt(event, "B0TrackerCKFTrajectories", ckfTrajectories);
+        hasCkfTrajectoriesUnfiltered = getOpt(
+            event, "B0TrackerCKFTrajectoriesUnfiltered", ckfTrajectoriesUnfiltered);
+        hasCkfTracks = getOpt(event, "B0TrackerCKFTracks", ckfEdmTracks);
+        hasCkfAssocs = getOpt(event, "B0TrackerCKFTrackAssociations", ckfAssocs);
+        hasCkfTracksUnfiltered = getOpt(event, "B0TrackerCKFTracksUnfiltered", ckfUnfiltered);
+        if (m_writeTrackStates) {
+            hasCkfActsStates = getOpt(event, "B0TrackerCKFActsTrackStates", ckfActsTrackStates);
+            hasCkfActsTracks = getOpt(event, "B0TrackerCKFActsTracks", ckfActsTracks);
+        }
+    }
 
     std::lock_guard<std::mutex> lock(m_fillMutex);
 
