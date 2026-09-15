@@ -87,6 +87,7 @@ private:
         int objectIndex = -1;
         std::uint32_t objectCollectionID = 0;
         int seedIndex = -1;
+        std::uint32_t seedCollectionID = 0;
         int identityValid = 0;
         int pdg = 0;
         int charge = 0;
@@ -117,7 +118,7 @@ private:
         std::vector<int>    ndf;
         std::vector<int>    index, charge, type, pdg;
         std::vector<int>    object_index, seed_index, identity_valid;
-        std::vector<std::uint32_t> object_collectionID;
+        std::vector<std::uint32_t> object_collectionID, seed_collectionID;
         std::array<std::vector<double>, 21> cov_upper;
         std::vector<int>    nStates, nMeasurements, nOutliers, nHoles, nSharedHits;
         std::vector<int>    assoc_mcIndex;
@@ -126,7 +127,7 @@ private:
 
         std::vector<int>    state_track_index, state_index, state_acts_index, state_type, state_pdg;
         std::vector<int>    state_parent_seed_index, state_parent_track_index, state_parent_identity_valid;
-        std::vector<std::uint32_t> state_parent_track_collectionID;
+        std::vector<std::uint32_t> state_parent_seed_collectionID, state_parent_track_collectionID;
         std::vector<int>    state_estimate_kind;
         std::vector<int>    state_mapping_method;
         std::vector<std::uint64_t> state_surface;

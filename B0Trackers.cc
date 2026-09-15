@@ -1584,7 +1584,8 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                          const auto& edmTracks,
                          const auto& assocs,
                          const auto& actsTracks,
-                         const auto& actsStates) {
+                         const auto& actsStates,
+                         const auto& chainSeeds) {
         struct AssocHit {
             int mcIndex = -1;
             std::uint32_t mcCollectionID = 0;
@@ -1606,7 +1607,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         }
 
         std::map<std::pair<std::uint32_t, int>, const edm4eic::Track*> edmTrackByTrajectory;
-        std::map<int, std::vector<std::pair<std::uint32_t, int>>> trackObjectsBySeed;
+        std::map<std::pair<std::uint32_t, int>, std::vector<std::pair<std::uint32_t, int>>> trackObjectsBySeed;
         std::map<std::pair<std::uint32_t, int>, int> pdgByTrackObject;
         for (const auto* edmTrack : edmTracks) {
             if (edmTrack == nullptr) continue;
@@ -1618,7 +1619,9 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             edmTrackByTrajectory[{trajectoryId.collectionID, trajectoryId.index}] = edmTrack;
             const auto seed = trajectory.getSeed();
             if (seed.isAvailable()) {
-                trackObjectsBySeed[seed.id().index].push_back({objectId.collectionID, objectId.index});
+                const auto seedId = seed.id();
+                trackObjectsBySeed[{seedId.collectionID, seedId.index}].push_back(
+                    {objectId.collectionID, objectId.index});
             }
         }
 
@@ -1692,6 +1695,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             int objectIndex = -1;
             std::uint32_t objectCollectionID = 0;
             int seedIndex = -1;
+            std::uint32_t seedCollectionID = 0;
             int identityValid = 0;
             const auto trajectoryId = trajectory->id();
             const auto stableTrackIt = edmTrackByTrajectory.find({trajectoryId.collectionID, trajectoryId.index});
@@ -1704,7 +1708,11 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 identityValid = 1;
             }
             const auto trajectorySeed = trajectory->getSeed();
-            if (trajectorySeed.isAvailable()) seedIndex = trajectorySeed.id().index;
+            if (trajectorySeed.isAvailable()) {
+                const auto seedId = trajectorySeed.id();
+                seedIndex = seedId.index;
+                seedCollectionID = seedId.collectionID;
+            }
             const int nStates = static_cast<int>(trajectory->getNStates());
             const int nMeasurements = static_cast<int>(trajectory->getNMeasurements());
             const int nOutliers = static_cast<int>(trajectory->getNOutliers());
@@ -1781,6 +1789,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             out.object_index.push_back(objectIndex);
             out.object_collectionID.push_back(objectCollectionID);
             out.seed_index.push_back(seedIndex);
+            out.seed_collectionID.push_back(seedCollectionID);
             out.identity_valid.push_back(identityValid);
             {
                 int k = 0;
@@ -1806,7 +1815,8 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                            nStates, nMeasurements, nOutliers, nHoles, nSharedHits, chi2, ndf,
                            assocMc, assocW, pdg, charge, momOk ? 1 : 0, pullQ, pullTh, pullPh);
                 out.oracle.objectIndex = objectIndex; out.oracle.objectCollectionID = objectCollectionID;
-                out.oracle.seedIndex = seedIndex; out.oracle.identityValid = identityValid;
+                out.oracle.seedIndex = seedIndex; out.oracle.seedCollectionID = seedCollectionID;
+                out.oracle.identityValid = identityValid;
                 out.oracle.assocMcCollectionID = assocCol;
             }
             if (truthAssoc) {
@@ -1825,6 +1835,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                     out.truthMatched.objectIndex = objectIndex;
                     out.truthMatched.objectCollectionID = objectCollectionID;
                     out.truthMatched.seedIndex = seedIndex;
+                    out.truthMatched.seedCollectionID = seedCollectionID;
                     out.truthMatched.identityValid = identityValid;
                     out.truthMatched.assocMcCollectionID = assocCol;
                 }
@@ -1846,6 +1857,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                     out.recoBest.objectIndex = objectIndex;
                     out.recoBest.objectCollectionID = objectCollectionID;
                     out.recoBest.seedIndex = seedIndex;
+                    out.recoBest.seedCollectionID = seedCollectionID;
                     out.recoBest.identityValid = identityValid;
                     out.recoBest.assocMcCollectionID = assocCol;
                 }
@@ -1870,12 +1882,21 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         for (int actsTrackIndex = 0; actsTrackIndex < nActsTracks; ++actsTrackIndex) {
             const auto track = trackContainer.getTrack(actsTrackIndex);
             int parentSeedIndex = -1;
-            try { parentSeedIndex = static_cast<int>(seedNumber(track)); } catch (...) {}
+            std::uint32_t parentSeedCollectionID = 0;
+            try {
+                const auto seedPosition = static_cast<std::size_t>(seedNumber(track));
+                if (seedPosition < chainSeeds.size() && chainSeeds[seedPosition] != nullptr) {
+                    const auto seedId = chainSeeds[seedPosition]->id();
+                    parentSeedIndex = seedId.index;
+                    parentSeedCollectionID = seedId.collectionID;
+                }
+            } catch (...) {}
             int parentTrackIndex = -1;
             std::uint32_t parentTrackCollectionID = 0;
             int parentIdentityValid = 0;
-            if (const auto found = trackObjectsBySeed.find(parentSeedIndex);
-                found != trackObjectsBySeed.end() && found->second.size() == 1) {
+            if (const auto found = trackObjectsBySeed.find({parentSeedCollectionID, parentSeedIndex});
+                parentSeedIndex >= 0 && found != trackObjectsBySeed.end() &&
+                found->second.size() == 1) {
                 parentTrackCollectionID = found->second.front().first;
                 parentTrackIndex = found->second.front().second;
                 parentIdentityValid = 1;
@@ -2052,6 +2073,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
 
                 out.state_track_index.push_back(actsTrackIndex);
                 out.state_parent_seed_index.push_back(parentSeedIndex);
+                out.state_parent_seed_collectionID.push_back(parentSeedCollectionID);
                 out.state_parent_track_index.push_back(parentTrackIndex);
                 out.state_parent_track_collectionID.push_back(parentTrackCollectionID);
                 out.state_parent_identity_valid.push_back(parentIdentityValid);
@@ -2114,8 +2136,10 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         }
     };
 
-    fillChain(m_ts, tsTrajectories, tsTracks, tsEdmTracks, tsAssocs, tsActsTracks, tsActsTrackStates);
-    fillChain(m_ckf, ckfTrajectories, ckfTracks, ckfEdmTracks, ckfAssocs, ckfActsTracks, ckfActsTrackStates);
+    fillChain(m_ts, tsTrajectories, tsTracks, tsEdmTracks, tsAssocs, tsActsTracks,
+              tsActsTrackStates, truthSeeds);
+    fillChain(m_ckf, ckfTrajectories, ckfTracks, ckfEdmTracks, ckfAssocs, ckfActsTracks,
+              ckfActsTrackStates, stubSeeds);
     m_selPrimaryHasTruthMatchedTrack = m_ckf.truthMatched.index >= 0 ? 1 : 0;
     m_nSensorMapExact = m_ts.nMapExact + m_ckf.nMapExact;
     m_nSensorMapFallback = m_ts.nMapFallback + m_ckf.nMapFallback;
@@ -2134,7 +2158,7 @@ void B0Trackers::BestSel::reset(double nan) {
     ndf = -1;
     assocMcIndex = -1;
     assocMcCollectionID = 0;
-    objectIndex = -1; objectCollectionID = 0; seedIndex = -1; identityValid = 0;
+    objectIndex = -1; objectCollectionID = 0; seedIndex = -1; seedCollectionID = 0; identityValid = 0;
     pdg = 0;
     charge = 0;
     momentumResolved = 0;
@@ -2162,12 +2186,14 @@ void B0Trackers::TrackChain::clear(double nan) {
     pull_qOverP.clear(); pull_theta.clear(); pull_phi.clear();
     chi2.clear(); ndf.clear();
     index.clear(); charge.clear(); type.clear(); pdg.clear();
-    object_index.clear(); object_collectionID.clear(); seed_index.clear(); identity_valid.clear();
+    object_index.clear(); object_collectionID.clear(); seed_index.clear(); seed_collectionID.clear();
+    identity_valid.clear();
     for (auto& v : cov_upper) v.clear();
     nStates.clear(); nMeasurements.clear(); nOutliers.clear(); nHoles.clear(); nSharedHits.clear();
     assoc_mcIndex.clear(); assoc_mcCollectionID.clear(); assoc_weight.clear();
     state_track_index.clear(); state_index.clear(); state_acts_index.clear();
-    state_parent_seed_index.clear(); state_parent_track_index.clear();
+    state_parent_seed_index.clear(); state_parent_seed_collectionID.clear();
+    state_parent_track_index.clear();
     state_parent_track_collectionID.clear(); state_parent_identity_valid.clear();
     state_estimate_kind.clear();
     state_type.clear(); state_pdg.clear(); state_mapping_method.clear();
@@ -2220,6 +2246,7 @@ void B0Trackers::bindBestSel(const std::string& prefix, BestSel& b) {
     br(prefix + "object_index", &b.objectIndex);
     br(prefix + "object_collectionID", &b.objectCollectionID);
     br(prefix + "seed_index", &b.seedIndex);
+    br(prefix + "seed_collectionID", &b.seedCollectionID);
     br(prefix + "identity_valid", &b.identityValid);
     br(prefix + "assoc_weight", &b.assocWeight);
     br(prefix + "pdg", &b.pdg);
@@ -2263,6 +2290,7 @@ void B0Trackers::bindTrackChain(const std::string& trkPrefix, TrackChain& c) {
     br(trkPrefix + "object_index", &c.object_index);
     br(trkPrefix + "object_collectionID", &c.object_collectionID);
     br(trkPrefix + "seed_index", &c.seed_index);
+    br(trkPrefix + "seed_collectionID", &c.seed_collectionID);
     br(trkPrefix + "identity_valid", &c.identity_valid);
     {
         static const std::array<std::pair<int,int>,21> ij{{
@@ -2284,6 +2312,7 @@ void B0Trackers::bindTrackChain(const std::string& trkPrefix, TrackChain& c) {
     br(trkPrefix + "assoc_weight", &c.assoc_weight);
     br(trkPrefix + "state_track_index", &c.state_track_index);
     br(trkPrefix + "state_parent_seed_index", &c.state_parent_seed_index);
+    br(trkPrefix + "state_parent_seed_collectionID", &c.state_parent_seed_collectionID);
     br(trkPrefix + "state_parent_track_index", &c.state_parent_track_index);
     br(trkPrefix + "state_parent_track_collectionID", &c.state_parent_track_collectionID);
     br(trkPrefix + "state_parent_identity_valid", &c.state_parent_identity_valid);
