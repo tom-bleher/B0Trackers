@@ -4,14 +4,41 @@ Schema 3 makes the B0 tracking diagnostics explicit enough to distinguish recons
 
 ## Selected-primary reconstruction stages
 
-The event now stores:
+The event now separates geometric reachability from usable reconstructed measurements and the later tracking stages.
+
+Truth reachability remains `n_stations_primary`: the number of distinct physical B0 stations crossed by the selected primary in simulation. It is an acceptance quantity, not yet a reconstructability definition.
+
+Measurement-level reconstructability is described by:
+
+- `min_measurement_stations_required`
+- `n_measurements_selected_primary`
+- `n_measurement_stations_selected_primary`
+- `sel_primary_measurement_reconstructable`
+
+A `B0TrackerMeasurement` is attributed to the selected primary when that particle is the largest summed truth-energy contributor across the measurement's constituent raw-hit cells. `sel_primary_measurement_reconstructable=1` requires attributed measurements in at least `B0Trackers:min_measurement_stations` distinct physical stations (default 3, matching the current B0 CKF station minimum). If RawHit truth associations are unavailable, these measurement-level quantities are `-1` rather than being reported as a reconstruction failure.
+
+For production truth semantics, use this together with eic/EICrecon#2967: that upstream fix makes RawHit→SimHit associations contain only deposits that actually contributed to the digitized charge. Without it, older association collections can include same-cell subthreshold SimHits and therefore make a measurement's truth composition less faithful to the digitizer response.
+
+The later selected-primary stages are:
 
 - `sel_primary_has_seed`
 - `sel_primary_has_unfiltered_track`
 - `sel_primary_has_filtered_track`
 - `sel_primary_has_truth_matched_track`
 
-Stub seeds are attributed from the truth composition of their constituent hit cells. Unfiltered and filtered track stages use the corresponding EDM track-to-MC association collections. This is the selected-primary funnel to use for efficiency; schema-2 `n_stub_seeds` / `n_ckf_*` remain useful event-level multiplicities, not primary efficiencies.
+Stub seeds are attributed from the truth composition of their constituent hit cells. Unfiltered and filtered track stages use the corresponding EDM track-to-MC association collections. Together, the intended selected-primary funnel is therefore:
+
+```text
+generated primary
+  -> truth reachable
+  -> measurement reconstructable
+  -> truth-attributed seed
+  -> unfiltered CKF candidate
+  -> ambiguity-surviving track
+  -> truth-matched final track
+```
+
+Schema-2 `n_stub_seeds` / `n_ckf_*` remain useful event-level multiplicities, not primary efficiencies.
 
 Seed truth diagnostics are available in `seed_assoc_mcIndex`, `seed_assoc_mcCollectionID`, and `seed_assoc_weight`.
 
