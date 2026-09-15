@@ -116,7 +116,7 @@ def stage_efficiencies(
     filtered: Sequence[bool],
     truth_matched: Sequence[bool],
 ) -> dict[str, dict[str, float | int]]:
-    """Summarize reconstruction flow for one selected truth-particle definition."""
+    """Summarize event-level B0 reconstruction flow for a selected truth particle."""
     arrays = [eligible, seeded, unfiltered, filtered, truth_matched]
     n = len(eligible)
     if any(len(a) != n for a in arrays):
@@ -149,7 +149,12 @@ def stage_efficiencies(
     return result
 
 
-def binned_efficiency(values: Sequence[float], passed: Sequence[bool], eligible: Sequence[bool], edges: Sequence[float]):
+def binned_efficiency(
+    values: Sequence[float],
+    passed: Sequence[bool],
+    eligible: Sequence[bool],
+    edges: Sequence[float],
+):
     """Return Wilson efficiencies in explicit half-open bins [lo, hi), last bin inclusive."""
     if not (len(values) == len(passed) == len(eligible)):
         raise ValueError("values/passed/eligible must have identical length")
@@ -195,13 +200,18 @@ def provenance_mismatches(baseline: dict, candidate: dict, paths: Sequence[str])
     """Return exact-value provenance mismatches for paths that must agree."""
     mismatches = []
     for path in paths:
+        base_missing = cand_missing = False
         try:
             base = nested_get(baseline, path)
+        except KeyError:
+            base_missing = True
+            base = "<missing>"
+        try:
             cand = nested_get(candidate, path)
         except KeyError:
-            mismatches.append({"path": path, "baseline": "<missing>", "candidate": "<missing>"})
-            continue
-        if base != cand:
+            cand_missing = True
+            cand = "<missing>"
+        if base_missing or cand_missing or base != cand:
             mismatches.append({"path": path, "baseline": base, "candidate": cand})
     return mismatches
 
