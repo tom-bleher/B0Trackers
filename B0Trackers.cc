@@ -778,146 +778,148 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         }
     }
 
-    std::lock_guard<std::mutex> lock(m_fillMutex);
+    // Reusable payload owned by this JANA worker thread. All event analysis
+    // happens here; only branch-buffer swapping and TTree::Fill() are serialized.
+    thread_local EventBuffers local;
 
-    m_hasRawAssocs               = hasRawAssocs;
-    m_hasStubSeeds               = hasStubSeeds;
-    m_hasTruthSeeds              = hasTruthSeeds;
-    m_hasTsTrackParams           = hasTsTrackParams;
-    m_hasTsTrajectories          = hasTsTrajectories;
-    m_hasTsTrajectoriesUnfiltered = hasTsTrajectoriesUnfiltered;
-    m_hasTsTracks                = hasTsTracks;
-    m_hasTsAssocs                = hasTsAssocs;
-    m_hasTsActsStates            = hasTsActsStates;
-    m_hasTsActsTracks            = hasTsActsTracks;
-    m_hasTsTracksUnfiltered      = hasTsTracksUnfiltered;
-    m_hasCkfTrackParams          = hasCkfTrackParams;
-    m_hasCkfTrajectories         = hasCkfTrajectories;
-    m_hasCkfTrajectoriesUnfiltered = hasCkfTrajectoriesUnfiltered;
-    m_hasCkfTracks               = hasCkfTracks;
-    m_hasCkfAssocs               = hasCkfAssocs;
-    m_hasCkfActsStates           = hasCkfActsStates;
-    m_hasCkfActsTracks           = hasCkfActsTracks;
-    m_hasCkfTracksUnfiltered     = hasCkfTracksUnfiltered;
-    m_hasCkfAssocsUnfiltered     = hasCkfAssocsUnfiltered;
+    local.m_hasRawAssocs               = hasRawAssocs;
+    local.m_hasStubSeeds               = hasStubSeeds;
+    local.m_hasTruthSeeds              = hasTruthSeeds;
+    local.m_hasTsTrackParams           = hasTsTrackParams;
+    local.m_hasTsTrajectories          = hasTsTrajectories;
+    local.m_hasTsTrajectoriesUnfiltered = hasTsTrajectoriesUnfiltered;
+    local.m_hasTsTracks                = hasTsTracks;
+    local.m_hasTsAssocs                = hasTsAssocs;
+    local.m_hasTsActsStates            = hasTsActsStates;
+    local.m_hasTsActsTracks            = hasTsActsTracks;
+    local.m_hasTsTracksUnfiltered      = hasTsTracksUnfiltered;
+    local.m_hasCkfTrackParams          = hasCkfTrackParams;
+    local.m_hasCkfTrajectories         = hasCkfTrajectories;
+    local.m_hasCkfTrajectoriesUnfiltered = hasCkfTrajectoriesUnfiltered;
+    local.m_hasCkfTracks               = hasCkfTracks;
+    local.m_hasCkfAssocs               = hasCkfAssocs;
+    local.m_hasCkfActsStates           = hasCkfActsStates;
+    local.m_hasCkfActsTracks           = hasCkfActsTracks;
+    local.m_hasCkfTracksUnfiltered     = hasCkfTracksUnfiltered;
+    local.m_hasCkfAssocsUnfiltered     = hasCkfAssocsUnfiltered;
 
-    m_eventNumber = event->GetEventNumber();
+    local.m_eventNumber = event->GetEventNumber();
 
-    vm_xR.clear();    vm_yR.clear();    vm_zR.clear();
-    vm_xT.clear();    vm_yT.clear();    vm_zT.clear();
-    vm_aclgad_xPixT.clear(); vm_aclgad_yPixT.clear(); vm_aclgad_zPixT.clear();
-    vm_aclgad_dxT.clear(); vm_aclgad_dyT.clear(); vm_aclgad_dzT.clear();
-    vm_aclgad_xPixR.clear(); vm_aclgad_yPixR.clear(); vm_aclgad_zPixR.clear();
-    vm_aclgad_dxR.clear(); vm_aclgad_dyR.clear(); vm_aclgad_dzR.clear();
-    vm_detX.clear();  vm_detY.clear();  vm_detZ.clear();
-    vm_plane.clear(); vm_station.clear(); vm_module.clear(); vm_side.clear(); vm_sensor.clear();
-    vm_pixX.clear();  vm_pixY.clear();   vm_pixZ.clear();
-    vm_aclgad_pixXT.clear(); vm_aclgad_pixYT.clear();
-    vm_aclgad_pixXR.clear(); vm_aclgad_pixYR.clear();
-    vm_cellID.clear(); vm_mcIndex.clear(); vm_mcCollectionID.clear();
-    vm_eDep.clear();  vm_time.clear();   vm_path.clear();
-    vm_pdg.clear();   vm_status.clear();
-    vm_isPrimary.clear(); vm_isSelPrimary.clear(); vm_cellFired.clear();
-    vm_px.clear();    vm_py.clear();    vm_pz.clear();   vm_p.clear();    vm_pT.clear();
+    local.vm_xR.clear();    local.vm_yR.clear();    local.vm_zR.clear();
+    local.vm_xT.clear();    local.vm_yT.clear();    local.vm_zT.clear();
+    local.vm_aclgad_xPixT.clear(); local.vm_aclgad_yPixT.clear(); local.vm_aclgad_zPixT.clear();
+    local.vm_aclgad_dxT.clear(); local.vm_aclgad_dyT.clear(); local.vm_aclgad_dzT.clear();
+    local.vm_aclgad_xPixR.clear(); local.vm_aclgad_yPixR.clear(); local.vm_aclgad_zPixR.clear();
+    local.vm_aclgad_dxR.clear(); local.vm_aclgad_dyR.clear(); local.vm_aclgad_dzR.clear();
+    local.vm_detX.clear();  local.vm_detY.clear();  local.vm_detZ.clear();
+    local.vm_plane.clear(); local.vm_station.clear(); local.vm_module.clear(); local.vm_side.clear(); local.vm_sensor.clear();
+    local.vm_pixX.clear();  local.vm_pixY.clear();   local.vm_pixZ.clear();
+    local.vm_aclgad_pixXT.clear(); local.vm_aclgad_pixYT.clear();
+    local.vm_aclgad_pixXR.clear(); local.vm_aclgad_pixYR.clear();
+    local.vm_cellID.clear(); local.vm_mcIndex.clear(); local.vm_mcCollectionID.clear();
+    local.vm_eDep.clear();  local.vm_time.clear();   local.vm_path.clear();
+    local.vm_pdg.clear();   local.vm_status.clear();
+    local.vm_isPrimary.clear(); local.vm_isSelPrimary.clear(); local.vm_cellFired.clear();
+    local.vm_px.clear();    local.vm_py.clear();    local.vm_pz.clear();   local.vm_p.clear();    local.vm_pT.clear();
 
-    vm_xP.clear();      vm_yP.clear();      vm_zP.clear();      vm_pathP.clear();   vm_timeP.clear();
-    vm_planeP.clear();  vm_stationP.clear(); vm_moduleP.clear(); vm_sideP.clear(); vm_sensorP.clear();
-    vm_pdgP.clear();    vm_statusP.clear(); vm_isPrimaryP.clear(); vm_isSelPrimaryP.clear();
-    vm_mcIndexP.clear(); vm_mcCollectionIDP.clear();
-    vm_pxP.clear();     vm_pyP.clear();     vm_pzP.clear();     vm_pP.clear();     vm_pTP.clear();
+    local.vm_xP.clear();      local.vm_yP.clear();      local.vm_zP.clear();      local.vm_pathP.clear();   local.vm_timeP.clear();
+    local.vm_planeP.clear();  local.vm_stationP.clear(); local.vm_moduleP.clear(); local.vm_sideP.clear(); local.vm_sensorP.clear();
+    local.vm_pdgP.clear();    local.vm_statusP.clear(); local.vm_isPrimaryP.clear(); local.vm_isSelPrimaryP.clear();
+    local.vm_mcIndexP.clear(); local.vm_mcCollectionIDP.clear();
+    local.vm_pxP.clear();     local.vm_pyP.clear();     local.vm_pzP.clear();     local.vm_pP.clear();     local.vm_pTP.clear();
 
-    vm_xEntry.clear();   vm_yEntry.clear();  vm_zEntry.clear();  vm_timeEntry.clear();
-    vm_pxEntry.clear();  vm_pyEntry.clear(); vm_pzEntry.clear(); vm_pEntry.clear(); vm_pTEntry.clear();
-    vm_xExit.clear();    vm_yExit.clear();   vm_zExit.clear();   vm_timeExit.clear();
-    vm_pxExit.clear();   vm_pyExit.clear();  vm_pzExit.clear();  vm_pExit.clear();  vm_pTExit.clear();
-    vm_sensorEntry.clear(); vm_sensorExit.clear();
-    vm_cellIDEntry.clear(); vm_cellIDExit.clear();
-    vm_planeEE.clear();  vm_stationEE.clear(); vm_moduleEE.clear(); vm_sideEE.clear();  vm_pdgEE.clear();
-    vm_isPrimaryEE.clear(); vm_isSelPrimaryEE.clear();
-    vm_mcIndexEE.clear(); vm_mcCollectionIDEE.clear(); vm_nStepsEE.clear();
-    vm_statusEE.clear();
+    local.vm_xEntry.clear();   local.vm_yEntry.clear();  local.vm_zEntry.clear();  local.vm_timeEntry.clear();
+    local.vm_pxEntry.clear();  local.vm_pyEntry.clear(); local.vm_pzEntry.clear(); local.vm_pEntry.clear(); local.vm_pTEntry.clear();
+    local.vm_xExit.clear();    local.vm_yExit.clear();   local.vm_zExit.clear();   local.vm_timeExit.clear();
+    local.vm_pxExit.clear();   local.vm_pyExit.clear();  local.vm_pzExit.clear();  local.vm_pExit.clear();  local.vm_pTExit.clear();
+    local.vm_sensorEntry.clear(); local.vm_sensorExit.clear();
+    local.vm_cellIDEntry.clear(); local.vm_cellIDExit.clear();
+    local.vm_planeEE.clear();  local.vm_stationEE.clear(); local.vm_moduleEE.clear(); local.vm_sideEE.clear();  local.vm_pdgEE.clear();
+    local.vm_isPrimaryEE.clear(); local.vm_isSelPrimaryEE.clear();
+    local.vm_mcIndexEE.clear(); local.vm_mcCollectionIDEE.clear(); local.vm_nStepsEE.clear();
+    local.vm_statusEE.clear();
 
-    vm_raw_cellID.clear(); vm_raw_charge.clear(); vm_raw_timeStamp.clear();
-    vm_raw_plane.clear(); vm_raw_station.clear(); vm_raw_module.clear();
-    vm_raw_side.clear(); vm_raw_sensor.clear();
-    vm_raw_mcIndex.clear(); vm_raw_mcCollectionID.clear();
-    vm_raw_nContribSim.clear(); vm_raw_nContribMc.clear(); vm_raw_mixedCell.clear();
-    vm_raw_dominantFrac.clear(); vm_raw_totalEdep.clear();
-    vm_rec_x.clear(); vm_rec_y.clear(); vm_rec_z.clear();
-    vm_rec_covxx.clear(); vm_rec_covyy.clear(); vm_rec_covzz.clear();
-    vm_rec_time.clear(); vm_rec_time_err.clear(); vm_rec_edep.clear(); vm_rec_edep_err.clear();
-    vm_rec_cellID.clear();
-    vm_rec_plane.clear(); vm_rec_station.clear(); vm_rec_module.clear();
-    vm_rec_side.clear(); vm_rec_sensor.clear();
-    vm_rec_pixX.clear(); vm_rec_pixY.clear(); vm_rec_pixZ.clear();
-    vm_rec_mcIndex.clear(); vm_rec_mcCollectionID.clear();
-    vm_rec_nContribSim.clear(); vm_rec_nContribMc.clear(); vm_rec_mixedCell.clear();
-    vm_rec_dominantFrac.clear(); vm_rec_totalEdep.clear();
+    local.vm_raw_cellID.clear(); local.vm_raw_charge.clear(); local.vm_raw_timeStamp.clear();
+    local.vm_raw_plane.clear(); local.vm_raw_station.clear(); local.vm_raw_module.clear();
+    local.vm_raw_side.clear(); local.vm_raw_sensor.clear();
+    local.vm_raw_mcIndex.clear(); local.vm_raw_mcCollectionID.clear();
+    local.vm_raw_nContribSim.clear(); local.vm_raw_nContribMc.clear(); local.vm_raw_mixedCell.clear();
+    local.vm_raw_dominantFrac.clear(); local.vm_raw_totalEdep.clear();
+    local.vm_rec_x.clear(); local.vm_rec_y.clear(); local.vm_rec_z.clear();
+    local.vm_rec_covxx.clear(); local.vm_rec_covyy.clear(); local.vm_rec_covzz.clear();
+    local.vm_rec_time.clear(); local.vm_rec_time_err.clear(); local.vm_rec_edep.clear(); local.vm_rec_edep_err.clear();
+    local.vm_rec_cellID.clear();
+    local.vm_rec_plane.clear(); local.vm_rec_station.clear(); local.vm_rec_module.clear();
+    local.vm_rec_side.clear(); local.vm_rec_sensor.clear();
+    local.vm_rec_pixX.clear(); local.vm_rec_pixY.clear(); local.vm_rec_pixZ.clear();
+    local.vm_rec_mcIndex.clear(); local.vm_rec_mcCollectionID.clear();
+    local.vm_rec_nContribSim.clear(); local.vm_rec_nContribMc.clear(); local.vm_rec_mixedCell.clear();
+    local.vm_rec_dominantFrac.clear(); local.vm_rec_totalEdep.clear();
 
-    vm_seed_quality.clear(); vm_seed_p.clear(); vm_seed_qOverP.clear();
-    vm_seed_theta.clear(); vm_seed_phi.clear(); vm_seed_loc0.clear(); vm_seed_loc1.clear();
-    vm_seed_sigma_qOverP.clear(); vm_seed_sigma_theta.clear(); vm_seed_sigma_phi.clear();
-    vm_seed_nHits.clear(); vm_seed_charge.clear();
-    vm_seed_momentum_resolved.clear(); vm_seed_became_track.clear();
-    vm_seed_made_unfiltered_track.clear(); vm_seed_survived_ambiguity.clear();
-    vm_seed_n_unfiltered_tracks.clear(); vm_seed_n_filtered_tracks.clear();
-    vm_seed_assoc_mcIndex.clear(); vm_seed_assoc_mcCollectionID.clear(); vm_seed_assoc_weight.clear();
-    vm_truth_seed_quality.clear(); vm_truth_seed_p.clear(); vm_truth_seed_qOverP.clear();
-    vm_truth_seed_theta.clear(); vm_truth_seed_phi.clear();
-    vm_truth_seed_loc0.clear(); vm_truth_seed_loc1.clear();
-    vm_truth_seed_sigma_qOverP.clear(); vm_truth_seed_sigma_theta.clear(); vm_truth_seed_sigma_phi.clear();
-    vm_truth_seed_nHits.clear(); vm_truth_seed_charge.clear();
-    vm_truth_seed_momentum_resolved.clear(); vm_truth_seed_became_track.clear();
-    vm_truth_seed_made_unfiltered_track.clear(); vm_truth_seed_survived_ambiguity.clear();
-    vm_truth_seed_n_unfiltered_tracks.clear(); vm_truth_seed_n_filtered_tracks.clear();
+    local.vm_seed_quality.clear(); local.vm_seed_p.clear(); local.vm_seed_qOverP.clear();
+    local.vm_seed_theta.clear(); local.vm_seed_phi.clear(); local.vm_seed_loc0.clear(); local.vm_seed_loc1.clear();
+    local.vm_seed_sigma_qOverP.clear(); local.vm_seed_sigma_theta.clear(); local.vm_seed_sigma_phi.clear();
+    local.vm_seed_nHits.clear(); local.vm_seed_charge.clear();
+    local.vm_seed_momentum_resolved.clear(); local.vm_seed_became_track.clear();
+    local.vm_seed_made_unfiltered_track.clear(); local.vm_seed_survived_ambiguity.clear();
+    local.vm_seed_n_unfiltered_tracks.clear(); local.vm_seed_n_filtered_tracks.clear();
+    local.vm_seed_assoc_mcIndex.clear(); local.vm_seed_assoc_mcCollectionID.clear(); local.vm_seed_assoc_weight.clear();
+    local.vm_truth_seed_quality.clear(); local.vm_truth_seed_p.clear(); local.vm_truth_seed_qOverP.clear();
+    local.vm_truth_seed_theta.clear(); local.vm_truth_seed_phi.clear();
+    local.vm_truth_seed_loc0.clear(); local.vm_truth_seed_loc1.clear();
+    local.vm_truth_seed_sigma_qOverP.clear(); local.vm_truth_seed_sigma_theta.clear(); local.vm_truth_seed_sigma_phi.clear();
+    local.vm_truth_seed_nHits.clear(); local.vm_truth_seed_charge.clear();
+    local.vm_truth_seed_momentum_resolved.clear(); local.vm_truth_seed_became_track.clear();
+    local.vm_truth_seed_made_unfiltered_track.clear(); local.vm_truth_seed_survived_ambiguity.clear();
+    local.vm_truth_seed_n_unfiltered_tracks.clear(); local.vm_truth_seed_n_filtered_tracks.clear();
 
     const double nan = b0trk::quietNaN();
-    m_ts.clear(nan);
-    m_ckf.clear(nan);
-    m_selPrimaryMcIndex = -1;
-    m_selPrimaryMcCollectionID = 0;
-    m_selPrimaryPx = nan;
-    m_selPrimaryPy = nan;
-    m_selPrimaryPz = nan;
-    m_selPrimaryP = nan;
-    m_selPrimaryPT = nan;
-    m_selPrimaryThscatMrad = nan;
-    m_selPrimaryCharge = nan;
-    m_nStationsPrimary = 0;
-    m_nSelectedPrimaryMeasurements = hasRawAssocs ? 0 : -1;
-    m_nMeasurementStationsSelectedPrimary = hasRawAssocs ? 0 : -1;
-    m_selPrimaryMeasurementReconstructable = hasRawAssocs ? 0 : -1;
-    m_selPrimaryHasSeed = 0;
-    m_selPrimaryHasUnfilteredTrack = 0;
-    m_selPrimaryHasFilteredTrack = 0;
-    m_selPrimaryHasTruthMatchedTrack = 0;
+    local.m_ts.clear(nan);
+    local.m_ckf.clear(nan);
+    local.m_selPrimaryMcIndex = -1;
+    local.m_selPrimaryMcCollectionID = 0;
+    local.m_selPrimaryPx = nan;
+    local.m_selPrimaryPy = nan;
+    local.m_selPrimaryPz = nan;
+    local.m_selPrimaryP = nan;
+    local.m_selPrimaryPT = nan;
+    local.m_selPrimaryThscatMrad = nan;
+    local.m_selPrimaryCharge = nan;
+    local.m_nStationsPrimary = 0;
+    local.m_nSelectedPrimaryMeasurements = hasRawAssocs ? 0 : -1;
+    local.m_nMeasurementStationsSelectedPrimary = hasRawAssocs ? 0 : -1;
+    local.m_selPrimaryMeasurementReconstructable = hasRawAssocs ? 0 : -1;
+    local.m_selPrimaryHasSeed = 0;
+    local.m_selPrimaryHasUnfilteredTrack = 0;
+    local.m_selPrimaryHasFilteredTrack = 0;
+    local.m_selPrimaryHasTruthMatchedTrack = 0;
 
-    beam_px.clear();  beam_py.clear();  beam_pz.clear(); beam_p.clear(); beam_pT.clear();
-    beam_pdg.clear();
-    m_primaryPx.clear(); m_primaryPy.clear(); m_primaryPz.clear(); m_primaryP.clear(); m_primaryPT.clear();
-    m_primaryCharge.clear();
-    m_primaryPdgOut.clear(); m_primaryStatusOut.clear(); m_primaryMcIndex.clear();
-    m_primaryMcCollectionID.clear();
-    m_genPpx.clear();    m_genPpy.clear();    m_genPpz.clear();    m_genPp.clear();    m_genPpT.clear();
-    m_genBeamPx.clear(); m_genBeamPy.clear(); m_genBeamPz.clear(); m_genBeamP.clear(); m_genBeamPT.clear();
-    m_genBeamPPx.clear();m_genBeamPPy.clear();m_genBeamPPz.clear();m_genBeamPP.clear();m_genBeamPPT.clear();
+    local.beam_px.clear();  local.beam_py.clear();  local.beam_pz.clear(); local.beam_p.clear(); local.beam_pT.clear();
+    local.beam_pdg.clear();
+    local.m_primaryPx.clear(); local.m_primaryPy.clear(); local.m_primaryPz.clear(); local.m_primaryP.clear(); local.m_primaryPT.clear();
+    local.m_primaryCharge.clear();
+    local.m_primaryPdgOut.clear(); local.m_primaryStatusOut.clear(); local.m_primaryMcIndex.clear();
+    local.m_primaryMcCollectionID.clear();
+    local.m_genPpx.clear();    local.m_genPpy.clear();    local.m_genPpz.clear();    local.m_genPp.clear();    local.m_genPpT.clear();
+    local.m_genBeamPx.clear(); local.m_genBeamPy.clear(); local.m_genBeamPz.clear(); local.m_genBeamP.clear(); local.m_genBeamPT.clear();
+    local.m_genBeamPPx.clear();local.m_genBeamPPy.clear();local.m_genBeamPPz.clear();local.m_genBeamPP.clear();local.m_genBeamPPT.clear();
 
-    m_nSimHits = static_cast<int>(simHits.size());
-    m_nRawHits = static_cast<int>(rawHits.size());
-    m_nRecHits = static_cast<int>(recHits.size());
-    m_nMeasurements = static_cast<int>(measurements.size());
-    m_nTruthSeeds = static_cast<int>(truthSeeds.size());
-    m_nStubSeeds = static_cast<int>(stubSeeds.size());
-    m_nTsUnfiltered = static_cast<int>(tsUnfiltered.size());
-    m_nTsFiltered = static_cast<int>(tsEdmTracks.size());
-    m_nCkfUnfiltered = static_cast<int>(ckfUnfiltered.size());
-    m_nCkfFiltered = static_cast<int>(ckfEdmTracks.size());
-    m_nSimHitsUnresolvedCellID = 0;
-    m_nMissingMcRelation = 0;
-    m_nSensorMapExact = 0;
-    m_nSensorMapFallback = 0;
-    m_nSensorMapFailed = 0;
-    m_nPixelSnapFailed = 0;
+    local.m_nSimHits = static_cast<int>(simHits.size());
+    local.m_nRawHits = static_cast<int>(rawHits.size());
+    local.m_nRecHits = static_cast<int>(recHits.size());
+    local.m_nMeasurements = static_cast<int>(measurements.size());
+    local.m_nTruthSeeds = static_cast<int>(truthSeeds.size());
+    local.m_nStubSeeds = static_cast<int>(stubSeeds.size());
+    local.m_nTsUnfiltered = static_cast<int>(tsUnfiltered.size());
+    local.m_nTsFiltered = static_cast<int>(tsEdmTracks.size());
+    local.m_nCkfUnfiltered = static_cast<int>(ckfUnfiltered.size());
+    local.m_nCkfFiltered = static_cast<int>(ckfEdmTracks.size());
+    local.m_nSimHitsUnresolvedCellID = 0;
+    local.m_nMissingMcRelation = 0;
+    local.m_nSensorMapExact = 0;
+    local.m_nSensorMapFallback = 0;
+    local.m_nSensorMapFailed = 0;
+    local.m_nPixelSnapFailed = 0;
 
     std::map<std::tuple<uint32_t, int, int, int, int, int>, std::size_t> penetrationIndex;
     std::map<std::tuple<uint32_t, int, int, int, int>, std::size_t> entryExitIndex;
@@ -1093,19 +1095,19 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         const double pT = std::hypot(p.x, p.y);
 
         primaryIds.emplace_back(id.collectionID, id.index);
-        m_primaryPdgOut.push_back(pdg);
-        m_primaryStatusOut.push_back(status);
-        m_primaryMcIndex.push_back(id.index);
-        m_primaryMcCollectionID.push_back(id.collectionID);
-        m_primaryPx.push_back(p.x);
-        m_primaryPy.push_back(p.y);
-        m_primaryPz.push_back(p.z);
-        m_primaryP.push_back(pmag);
-        m_primaryPT.push_back(pT);
+        local.m_primaryPdgOut.push_back(pdg);
+        local.m_primaryStatusOut.push_back(status);
+        local.m_primaryMcIndex.push_back(id.index);
+        local.m_primaryMcCollectionID.push_back(id.collectionID);
+        local.m_primaryPx.push_back(p.x);
+        local.m_primaryPy.push_back(p.y);
+        local.m_primaryPz.push_back(p.z);
+        local.m_primaryP.push_back(pmag);
+        local.m_primaryPT.push_back(pT);
         // Charge comes from the simulation record, not from a hand-maintained
         // PDG table: primary_pdg is configurable and a negative species would
         // otherwise get a silently wrong-signed q/p pull.
-        m_primaryCharge.push_back(part->getCharge());
+        local.m_primaryCharge.push_back(part->getCharge());
     }
 
     const auto isSelectedPrimary = [&primaryIds](std::uint32_t collectionID, int index) -> int {
@@ -1116,33 +1118,33 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     };
 
     std::size_t primaryRef = 0;
-    for (std::size_t i = 1; i < m_primaryP.size(); ++i) {
-        if (m_primaryP[i] > m_primaryP[primaryRef]) primaryRef = i;
+    for (std::size_t i = 1; i < local.m_primaryP.size(); ++i) {
+        if (local.m_primaryP[i] > local.m_primaryP[primaryRef]) primaryRef = i;
     }
-    if (!m_primaryP.empty()) {
-        m_selPrimaryMcIndex = m_primaryMcIndex[primaryRef];
-        m_selPrimaryMcCollectionID = m_primaryMcCollectionID[primaryRef];
-        m_selPrimaryPx = m_primaryPx[primaryRef];
-        m_selPrimaryPy = m_primaryPy[primaryRef];
-        m_selPrimaryPz = m_primaryPz[primaryRef];
-        m_selPrimaryP = m_primaryP[primaryRef];
-        m_selPrimaryPT = m_primaryPT[primaryRef];
-        m_selPrimaryCharge = m_primaryCharge[primaryRef];
+    if (!local.m_primaryP.empty()) {
+        local.m_selPrimaryMcIndex = local.m_primaryMcIndex[primaryRef];
+        local.m_selPrimaryMcCollectionID = local.m_primaryMcCollectionID[primaryRef];
+        local.m_selPrimaryPx = local.m_primaryPx[primaryRef];
+        local.m_selPrimaryPy = local.m_primaryPy[primaryRef];
+        local.m_selPrimaryPz = local.m_primaryPz[primaryRef];
+        local.m_selPrimaryP = local.m_primaryP[primaryRef];
+        local.m_selPrimaryPT = local.m_primaryPT[primaryRef];
+        local.m_selPrimaryCharge = local.m_primaryCharge[primaryRef];
     }
     const auto isSelPrimary = [this](std::uint32_t collectionID, int index) -> int {
-        return (m_selPrimaryMcIndex >= 0 &&
-                collectionID == m_selPrimaryMcCollectionID &&
-                index == m_selPrimaryMcIndex) ? 1 : 0;
+        return (local.m_selPrimaryMcIndex >= 0 &&
+                collectionID == local.m_selPrimaryMcCollectionID &&
+                index == local.m_selPrimaryMcIndex) ? 1 : 0;
     };
 
     // A truth crossing is only geometrical acceptance. Reconstructability also
     // requires digitized/reconstructed measurements attributable to the selected
     // primary in enough distinct physical B0 stations. Build the measurement
     // truth label from the summed truth composition of its constituent raw cells.
-    m_nSelectedPrimaryMeasurements = hasRawAssocs ? 0 : -1;
-    m_nMeasurementStationsSelectedPrimary = hasRawAssocs ? 0 : -1;
-    m_selPrimaryMeasurementReconstructable = hasRawAssocs ? 0 : -1;
-    if (hasRawAssocs && m_selPrimaryMcIndex >= 0) {
+    local.m_nSelectedPrimaryMeasurements = hasRawAssocs ? 0 : -1;
+    local.m_nMeasurementStationsSelectedPrimary = hasRawAssocs ? 0 : -1;
+    local.m_selPrimaryMeasurementReconstructable = hasRawAssocs ? 0 : -1;
+    if (hasRawAssocs && local.m_selPrimaryMcIndex >= 0) {
         std::set<int> selectedMeasurementStations;
         for (const auto* measurement : measurements) {
             if (measurement == nullptr) continue;
@@ -1169,23 +1171,23 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 measurementTruth.begin(), measurementTruth.end(),
                 [](const auto& a, const auto& b) { return a.second < b.second; });
             if (dominant == measurementTruth.end()) continue;
-            if (dominant->first.first != m_selPrimaryMcCollectionID ||
-                dominant->first.second != m_selPrimaryMcIndex) {
+            if (dominant->first.first != local.m_selPrimaryMcCollectionID ||
+                dominant->first.second != local.m_selPrimaryMcIndex) {
                 continue;
             }
-            ++m_nSelectedPrimaryMeasurements;
+            ++local.m_nSelectedPrimaryMeasurements;
             selectedMeasurementStations.insert(measurementStations.begin(), measurementStations.end());
         }
-        m_nMeasurementStationsSelectedPrimary =
+        local.m_nMeasurementStationsSelectedPrimary =
             static_cast<int>(selectedMeasurementStations.size());
-        m_selPrimaryMeasurementReconstructable =
-            m_nMeasurementStationsSelectedPrimary >= m_minMeasurementStations ? 1 : 0;
+        local.m_selPrimaryMeasurementReconstructable =
+            local.m_nMeasurementStationsSelectedPrimary >= m_minMeasurementStations ? 1 : 0;
     }
 
     for (const auto* h : simHits) {
         const auto mc = h->getParticle();
         if (!mc.isAvailable()) {
-            ++m_nMissingMcRelation;
+            ++local.m_nMissingMcRelation;
             continue;
         }
 
@@ -1201,7 +1203,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             lpos = m_volman.lookupDetElement(cid).nominal()
                        .worldToLocal(dd4hep::Position(gpos.x(), gpos.y(), gpos.z()));
         } catch (const std::exception&) {
-            ++m_nSimHitsUnresolvedCellID;
+            ++local.m_nSimHitsUnresolvedCellID;
             continue;
         }
         const auto truthPos = h->getPosition();
@@ -1218,99 +1220,99 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         const auto readoutPixel =
             snapToAclgadPixel(10. * gpos.x(), 10. * gpos.y(), 10. * gpos.z(), cid);
         if (!truthPixel.ok || !readoutPixel.ok) {
-            ++m_nPixelSnapFailed;
+            ++local.m_nPixelSnapFailed;
         }
 
-        vm_xR.push_back(10. * gpos.x());
-        vm_yR.push_back(10. * gpos.y());
-        vm_zR.push_back(10. * gpos.z());
-        vm_xT.push_back(truthPos.x);
-        vm_yT.push_back(truthPos.y);
-        vm_zT.push_back(truthPos.z);
-        vm_aclgad_xPixT.push_back(truthPixel.x);
-        vm_aclgad_yPixT.push_back(truthPixel.y);
-        vm_aclgad_zPixT.push_back(truthPixel.z);
-        vm_aclgad_dxT.push_back(truthPixel.dx);
-        vm_aclgad_dyT.push_back(truthPixel.dy);
-        vm_aclgad_dzT.push_back(truthPixel.dz);
-        vm_aclgad_xPixR.push_back(readoutPixel.x);
-        vm_aclgad_yPixR.push_back(readoutPixel.y);
-        vm_aclgad_zPixR.push_back(readoutPixel.z);
-        vm_aclgad_dxR.push_back(readoutPixel.dx);
-        vm_aclgad_dyR.push_back(readoutPixel.dy);
-        vm_aclgad_dzR.push_back(readoutPixel.dz);
-        vm_detX.push_back(10. * lpos.x());
-        vm_detY.push_back(10. * lpos.y());
-        vm_detZ.push_back(10. * lpos.z());
-        vm_plane .push_back(plane);
-        vm_station.push_back(stationOf(plane));
-        vm_module.push_back(module);
-        vm_side  .push_back(side);
-        vm_sensor.push_back(sensor);
-        vm_pixX  .push_back(pixX);
-        vm_pixY  .push_back(pixY);
-        vm_pixZ  .push_back(pixZ);
-        vm_aclgad_pixXT.push_back(truthPixel.pixX);
-        vm_aclgad_pixYT.push_back(truthPixel.pixY);
-        vm_aclgad_pixXR.push_back(readoutPixel.pixX);
-        vm_aclgad_pixYR.push_back(readoutPixel.pixY);
-        vm_cellID.push_back(cid);
-        vm_eDep  .push_back(h->getEDep());
-        vm_time  .push_back(h->getTime());
-        vm_path  .push_back(path);
-        vm_pdg   .push_back(mc.getPDG());
-        vm_mcIndex.push_back(id.index);
-        vm_mcCollectionID.push_back(id.collectionID);
-        vm_px    .push_back(mom.x);
-        vm_py    .push_back(mom.y);
-        vm_pz    .push_back(mom.z);
-        vm_p     .push_back(pmag);
-        vm_pT    .push_back(pT);
-        vm_status.push_back(mc.getGeneratorStatus());
-        vm_isPrimary.push_back(primaryFlag);
-        vm_isSelPrimary.push_back(selFlag);
+        local.vm_xR.push_back(10. * gpos.x());
+        local.vm_yR.push_back(10. * gpos.y());
+        local.vm_zR.push_back(10. * gpos.z());
+        local.vm_xT.push_back(truthPos.x);
+        local.vm_yT.push_back(truthPos.y);
+        local.vm_zT.push_back(truthPos.z);
+        local.vm_aclgad_xPixT.push_back(truthPixel.x);
+        local.vm_aclgad_yPixT.push_back(truthPixel.y);
+        local.vm_aclgad_zPixT.push_back(truthPixel.z);
+        local.vm_aclgad_dxT.push_back(truthPixel.dx);
+        local.vm_aclgad_dyT.push_back(truthPixel.dy);
+        local.vm_aclgad_dzT.push_back(truthPixel.dz);
+        local.vm_aclgad_xPixR.push_back(readoutPixel.x);
+        local.vm_aclgad_yPixR.push_back(readoutPixel.y);
+        local.vm_aclgad_zPixR.push_back(readoutPixel.z);
+        local.vm_aclgad_dxR.push_back(readoutPixel.dx);
+        local.vm_aclgad_dyR.push_back(readoutPixel.dy);
+        local.vm_aclgad_dzR.push_back(readoutPixel.dz);
+        local.vm_detX.push_back(10. * lpos.x());
+        local.vm_detY.push_back(10. * lpos.y());
+        local.vm_detZ.push_back(10. * lpos.z());
+        local.vm_plane .push_back(plane);
+        local.vm_station.push_back(stationOf(plane));
+        local.vm_module.push_back(module);
+        local.vm_side  .push_back(side);
+        local.vm_sensor.push_back(sensor);
+        local.vm_pixX  .push_back(pixX);
+        local.vm_pixY  .push_back(pixY);
+        local.vm_pixZ  .push_back(pixZ);
+        local.vm_aclgad_pixXT.push_back(truthPixel.pixX);
+        local.vm_aclgad_pixYT.push_back(truthPixel.pixY);
+        local.vm_aclgad_pixXR.push_back(readoutPixel.pixX);
+        local.vm_aclgad_pixYR.push_back(readoutPixel.pixY);
+        local.vm_cellID.push_back(cid);
+        local.vm_eDep  .push_back(h->getEDep());
+        local.vm_time  .push_back(h->getTime());
+        local.vm_path  .push_back(path);
+        local.vm_pdg   .push_back(mc.getPDG());
+        local.vm_mcIndex.push_back(id.index);
+        local.vm_mcCollectionID.push_back(id.collectionID);
+        local.vm_px    .push_back(mom.x);
+        local.vm_py    .push_back(mom.y);
+        local.vm_pz    .push_back(mom.z);
+        local.vm_p     .push_back(pmag);
+        local.vm_pT    .push_back(pT);
+        local.vm_status.push_back(mc.getGeneratorStatus());
+        local.vm_isPrimary.push_back(primaryFlag);
+        local.vm_isSelPrimary.push_back(selFlag);
         // Cell-level, not SimHit-level: the generic digitizer associates every
         // SimHit sharing a fired cellID, including subthreshold ones, so this
         // says the cell produced a RawHit -- not that this deposit did.
-        vm_cellFired.push_back(rawCellIDs.count(cid) ? 1 : 0);
+        local.vm_cellFired.push_back(rawCellIDs.count(cid) ? 1 : 0);
 
         const auto key = std::make_tuple(id.collectionID, id.index, plane, side, module, sensor);
         const auto existing = penetrationIndex.find(key);
         if (existing == penetrationIndex.end()) {
-            penetrationIndex.emplace(key, vm_xP.size());
-            vm_xP     .push_back(truthPos.x);
-            vm_yP     .push_back(truthPos.y);
-            vm_zP     .push_back(truthPos.z);
-            vm_pathP  .push_back(path);
-            vm_timeP  .push_back(h->getTime());
-            vm_planeP .push_back(plane);
-            vm_stationP.push_back(stationOf(plane));
-            vm_moduleP.push_back(module);
-            vm_sideP  .push_back(side);
-            vm_sensorP.push_back(sensor);
-            vm_pdgP   .push_back(mc.getPDG());
-            vm_statusP.push_back(mc.getGeneratorStatus());
-            vm_isPrimaryP.push_back(primaryFlag);
-            vm_isSelPrimaryP.push_back(selFlag);
-            vm_mcIndexP.push_back(id.index);
-            vm_mcCollectionIDP.push_back(id.collectionID);
-            vm_pxP    .push_back(mom.x);
-            vm_pyP    .push_back(mom.y);
-            vm_pzP    .push_back(mom.z);
-            vm_pP     .push_back(pmag);
-            vm_pTP    .push_back(pT);
-        } else if (h->getTime() < vm_timeP[existing->second]) {
+            penetrationIndex.emplace(key, local.vm_xP.size());
+            local.vm_xP     .push_back(truthPos.x);
+            local.vm_yP     .push_back(truthPos.y);
+            local.vm_zP     .push_back(truthPos.z);
+            local.vm_pathP  .push_back(path);
+            local.vm_timeP  .push_back(h->getTime());
+            local.vm_planeP .push_back(plane);
+            local.vm_stationP.push_back(stationOf(plane));
+            local.vm_moduleP.push_back(module);
+            local.vm_sideP  .push_back(side);
+            local.vm_sensorP.push_back(sensor);
+            local.vm_pdgP   .push_back(mc.getPDG());
+            local.vm_statusP.push_back(mc.getGeneratorStatus());
+            local.vm_isPrimaryP.push_back(primaryFlag);
+            local.vm_isSelPrimaryP.push_back(selFlag);
+            local.vm_mcIndexP.push_back(id.index);
+            local.vm_mcCollectionIDP.push_back(id.collectionID);
+            local.vm_pxP    .push_back(mom.x);
+            local.vm_pyP    .push_back(mom.y);
+            local.vm_pzP    .push_back(mom.z);
+            local.vm_pP     .push_back(pmag);
+            local.vm_pTP    .push_back(pT);
+        } else if (h->getTime() < local.vm_timeP[existing->second]) {
             const std::size_t idx = existing->second;
-            vm_xP[idx]    = truthPos.x;
-            vm_yP[idx]    = truthPos.y;
-            vm_zP[idx]    = truthPos.z;
-            vm_pathP[idx] = path;
-            vm_timeP[idx] = h->getTime();
-            vm_pxP[idx]   = mom.x;
-            vm_pyP[idx]   = mom.y;
-            vm_pzP[idx]   = mom.z;
-            vm_pP[idx]    = pmag;
-            vm_pTP[idx]   = pT;
+            local.vm_xP[idx]    = truthPos.x;
+            local.vm_yP[idx]    = truthPos.y;
+            local.vm_zP[idx]    = truthPos.z;
+            local.vm_pathP[idx] = path;
+            local.vm_timeP[idx] = h->getTime();
+            local.vm_pxP[idx]   = mom.x;
+            local.vm_pyP[idx]   = mom.y;
+            local.vm_pzP[idx]   = mom.z;
+            local.vm_pP[idx]    = pmag;
+            local.vm_pTP[idx]   = pT;
         }
 
         if (side >= 0) {
@@ -1318,58 +1320,58 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             const double thisTime = h->getTime();
             const auto eeIt = entryExitIndex.find(eeKey);
             if (eeIt == entryExitIndex.end()) {
-                entryExitIndex.emplace(eeKey, vm_xEntry.size());
-                vm_xEntry .push_back(truthPos.x);   vm_yEntry .push_back(truthPos.y);
-                vm_zEntry .push_back(truthPos.z);   vm_timeEntry.push_back(thisTime);
-                vm_pxEntry.push_back(mom.x);        vm_pyEntry.push_back(mom.y);
-                vm_pzEntry.push_back(mom.z);        vm_pEntry .push_back(pmag);
-                vm_pTEntry.push_back(pT);
-                vm_xExit  .push_back(truthPos.x);   vm_yExit  .push_back(truthPos.y);
-                vm_zExit  .push_back(truthPos.z);   vm_timeExit.push_back(thisTime);
-                vm_pxExit .push_back(mom.x);        vm_pyExit .push_back(mom.y);
-                vm_pzExit .push_back(mom.z);        vm_pExit  .push_back(pmag);
-                vm_pTExit .push_back(pT);
-                vm_sensorEntry.push_back(sensor);   vm_sensorExit.push_back(sensor);
-                vm_cellIDEntry.push_back(cid);      vm_cellIDExit.push_back(cid);
-                vm_planeEE.push_back(plane);
-                vm_stationEE.push_back(stationOf(plane));
-                vm_moduleEE.push_back(module);
-                vm_sideEE.push_back(side);
-                vm_pdgEE  .push_back(mc.getPDG());
-                vm_isPrimaryEE.push_back(primaryFlag);
-                vm_isSelPrimaryEE.push_back(selFlag);
-                vm_mcIndexEE.push_back(id.index);
-                vm_mcCollectionIDEE.push_back(id.collectionID);
-                vm_nStepsEE.push_back(1);
-                vm_statusEE.push_back(mc.getGeneratorStatus());
+                entryExitIndex.emplace(eeKey, local.vm_xEntry.size());
+                local.vm_xEntry .push_back(truthPos.x);   local.vm_yEntry .push_back(truthPos.y);
+                local.vm_zEntry .push_back(truthPos.z);   local.vm_timeEntry.push_back(thisTime);
+                local.vm_pxEntry.push_back(mom.x);        local.vm_pyEntry.push_back(mom.y);
+                local.vm_pzEntry.push_back(mom.z);        local.vm_pEntry .push_back(pmag);
+                local.vm_pTEntry.push_back(pT);
+                local.vm_xExit  .push_back(truthPos.x);   local.vm_yExit  .push_back(truthPos.y);
+                local.vm_zExit  .push_back(truthPos.z);   local.vm_timeExit.push_back(thisTime);
+                local.vm_pxExit .push_back(mom.x);        local.vm_pyExit .push_back(mom.y);
+                local.vm_pzExit .push_back(mom.z);        local.vm_pExit  .push_back(pmag);
+                local.vm_pTExit .push_back(pT);
+                local.vm_sensorEntry.push_back(sensor);   local.vm_sensorExit.push_back(sensor);
+                local.vm_cellIDEntry.push_back(cid);      local.vm_cellIDExit.push_back(cid);
+                local.vm_planeEE.push_back(plane);
+                local.vm_stationEE.push_back(stationOf(plane));
+                local.vm_moduleEE.push_back(module);
+                local.vm_sideEE.push_back(side);
+                local.vm_pdgEE  .push_back(mc.getPDG());
+                local.vm_isPrimaryEE.push_back(primaryFlag);
+                local.vm_isSelPrimaryEE.push_back(selFlag);
+                local.vm_mcIndexEE.push_back(id.index);
+                local.vm_mcCollectionIDEE.push_back(id.collectionID);
+                local.vm_nStepsEE.push_back(1);
+                local.vm_statusEE.push_back(mc.getGeneratorStatus());
             } else {
                 const std::size_t idx = eeIt->second;
-                ++vm_nStepsEE[idx];
-                if (thisTime < vm_timeEntry[idx]) {
-                    vm_xEntry[idx]    = truthPos.x;
-                    vm_yEntry[idx]    = truthPos.y;
-                    vm_zEntry[idx]    = truthPos.z;
-                    vm_timeEntry[idx] = thisTime;
-                    vm_pxEntry[idx]   = mom.x;
-                    vm_pyEntry[idx]   = mom.y;
-                    vm_pzEntry[idx]   = mom.z;
-                    vm_pEntry[idx]    = pmag;
-                    vm_pTEntry[idx]   = pT;
-                    vm_sensorEntry[idx] = sensor;
-                    vm_cellIDEntry[idx] = cid;
+                ++local.vm_nStepsEE[idx];
+                if (thisTime < local.vm_timeEntry[idx]) {
+                    local.vm_xEntry[idx]    = truthPos.x;
+                    local.vm_yEntry[idx]    = truthPos.y;
+                    local.vm_zEntry[idx]    = truthPos.z;
+                    local.vm_timeEntry[idx] = thisTime;
+                    local.vm_pxEntry[idx]   = mom.x;
+                    local.vm_pyEntry[idx]   = mom.y;
+                    local.vm_pzEntry[idx]   = mom.z;
+                    local.vm_pEntry[idx]    = pmag;
+                    local.vm_pTEntry[idx]   = pT;
+                    local.vm_sensorEntry[idx] = sensor;
+                    local.vm_cellIDEntry[idx] = cid;
                 }
-                if (thisTime > vm_timeExit[idx]) {
-                    vm_xExit[idx]    = truthPos.x;
-                    vm_yExit[idx]    = truthPos.y;
-                    vm_zExit[idx]    = truthPos.z;
-                    vm_timeExit[idx] = thisTime;
-                    vm_pxExit[idx]   = mom.x;
-                    vm_pyExit[idx]   = mom.y;
-                    vm_pzExit[idx]   = mom.z;
-                    vm_pExit[idx]    = pmag;
-                    vm_pTExit[idx]   = pT;
-                    vm_sensorExit[idx] = sensor;
-                    vm_cellIDExit[idx] = cid;
+                if (thisTime > local.vm_timeExit[idx]) {
+                    local.vm_xExit[idx]    = truthPos.x;
+                    local.vm_yExit[idx]    = truthPos.y;
+                    local.vm_zExit[idx]    = truthPos.z;
+                    local.vm_timeExit[idx] = thisTime;
+                    local.vm_pxExit[idx]   = mom.x;
+                    local.vm_pyExit[idx]   = mom.y;
+                    local.vm_pzExit[idx]   = mom.z;
+                    local.vm_pExit[idx]    = pmag;
+                    local.vm_pTExit[idx]   = pT;
+                    local.vm_sensorExit[idx] = sensor;
+                    local.vm_cellIDExit[idx] = cid;
                 }
             }
         }
@@ -1384,57 +1386,57 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
 
         if (status == 4 &&
             (pdg == 22 || pdg == 11 || pdg == -11 || pdg == 2212)) {
-            beam_px .push_back(p.x);
-            beam_py .push_back(p.y);
-            beam_pz .push_back(p.z);
-            beam_p  .push_back(pmag);
-            beam_pT .push_back(pT);
-            beam_pdg.push_back(pdg);
+            local.beam_px .push_back(p.x);
+            local.beam_py .push_back(p.y);
+            local.beam_pz .push_back(p.z);
+            local.beam_p  .push_back(pmag);
+            local.beam_pT .push_back(pT);
+            local.beam_pdg.push_back(pdg);
         }
         if (pdg == 2212 && status == 4) {
-            m_genPpx.push_back(p.x);
-            m_genPpy.push_back(p.y);
-            m_genPpz.push_back(p.z);
-            m_genPp .push_back(pmag);
-            m_genPpT.push_back(pT);
+            local.m_genPpx.push_back(p.x);
+            local.m_genPpy.push_back(p.y);
+            local.m_genPpz.push_back(p.z);
+            local.m_genPp .push_back(pmag);
+            local.m_genPpT.push_back(pT);
         }
         if (pdg == 2212 && status == 1) {
-            m_genBeamPPx.push_back(p.x);
-            m_genBeamPPy.push_back(p.y);
-            m_genBeamPPz.push_back(p.z);
-            m_genBeamPP .push_back(pmag);
-            m_genBeamPPT.push_back(pT);
+            local.m_genBeamPPx.push_back(p.x);
+            local.m_genBeamPPy.push_back(p.y);
+            local.m_genBeamPPz.push_back(p.z);
+            local.m_genBeamPP .push_back(pmag);
+            local.m_genBeamPPT.push_back(pT);
         }
         if (pdg == 11 && status == 1) {
-            m_genBeamPx.push_back(p.x);
-            m_genBeamPy.push_back(p.y);
-            m_genBeamPz.push_back(p.z);
-            m_genBeamP .push_back(pmag);
-            m_genBeamPT.push_back(pT);
+            local.m_genBeamPx.push_back(p.x);
+            local.m_genBeamPy.push_back(p.y);
+            local.m_genBeamPz.push_back(p.z);
+            local.m_genBeamP .push_back(pmag);
+            local.m_genBeamPT.push_back(pT);
         }
     }
 
-    if (std::isfinite(m_selPrimaryP) && !m_genPp.empty()) {
-        const double bx = m_genPpx[0];
-        const double by = m_genPpy[0];
-        const double bz = m_genPpz[0];
+    if (std::isfinite(local.m_selPrimaryP) && !local.m_genPp.empty()) {
+        const double bx = local.m_genPpx[0];
+        const double by = local.m_genPpy[0];
+        const double bz = local.m_genPpz[0];
         const double bn = std::sqrt(bx * bx + by * by + bz * bz);
-        const double pn = m_selPrimaryP;
+        const double pn = local.m_selPrimaryP;
         if (bn > 0.0 && pn > 0.0) {
             const double cosang = std::clamp(
-                (m_selPrimaryPx * bx + m_selPrimaryPy * by + m_selPrimaryPz * bz) / (pn * bn),
+                (local.m_selPrimaryPx * bx + local.m_selPrimaryPy * by + local.m_selPrimaryPz * bz) / (pn * bn),
                 -1.0, 1.0);
-            m_selPrimaryThscatMrad = 1.0e3 * std::acos(cosang);
+            local.m_selPrimaryThscatMrad = 1.0e3 * std::acos(cosang);
         }
     }
     {
         std::set<int> stations;
-        for (std::size_t i = 0; i < vm_stationP.size(); ++i) {
-            if (vm_isSelPrimaryP[i] == 1 && vm_stationP[i] > 0) {
-                stations.insert(vm_stationP[i]);
+        for (std::size_t i = 0; i < local.vm_stationP.size(); ++i) {
+            if (local.vm_isSelPrimaryP[i] == 1 && local.vm_stationP[i] > 0) {
+                stations.insert(local.vm_stationP[i]);
             }
         }
-        m_nStationsPrimary = static_cast<int>(stations.size());
+        local.m_nStationsPrimary = static_cast<int>(stations.size());
     }
 
     for (const auto* raw : rawHits) {
@@ -1443,21 +1445,21 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         int plane = -1, module = -1, sensor = -1, side = -1;
         decodeIds(cid, plane, module, sensor, side);
         const auto linkIt = simLinkByCell.find(cid);
-        vm_raw_cellID.push_back(cid);
-        vm_raw_charge.push_back(raw->getCharge());
-        vm_raw_timeStamp.push_back(raw->getTimeStamp());
-        vm_raw_plane.push_back(plane);
-        vm_raw_station.push_back(stationOf(plane));
-        vm_raw_module.push_back(module);
-        vm_raw_side.push_back(side);
-        vm_raw_sensor.push_back(sensor);
-        vm_raw_mcIndex.push_back(linkIt == simLinkByCell.end() ? -1 : linkIt->second.mcIndex);
-        vm_raw_mcCollectionID.push_back(linkIt == simLinkByCell.end() ? 0 : linkIt->second.mcCollectionID);
-        vm_raw_nContribSim.push_back(linkIt == simLinkByCell.end() ? 0 : linkIt->second.nContribSim);
-        vm_raw_nContribMc.push_back(linkIt == simLinkByCell.end() ? 0 : linkIt->second.nContribMc);
-        vm_raw_dominantFrac.push_back(linkIt == simLinkByCell.end() ? nan : dominantFraction(linkIt->second));
-        vm_raw_totalEdep.push_back(linkIt == simLinkByCell.end() ? nan : linkIt->second.totalEDep);
-        vm_raw_mixedCell.push_back(linkIt == simLinkByCell.end() ? -1 : (linkIt->second.nContribMc > 1 ? 1 : 0));
+        local.vm_raw_cellID.push_back(cid);
+        local.vm_raw_charge.push_back(raw->getCharge());
+        local.vm_raw_timeStamp.push_back(raw->getTimeStamp());
+        local.vm_raw_plane.push_back(plane);
+        local.vm_raw_station.push_back(stationOf(plane));
+        local.vm_raw_module.push_back(module);
+        local.vm_raw_side.push_back(side);
+        local.vm_raw_sensor.push_back(sensor);
+        local.vm_raw_mcIndex.push_back(linkIt == simLinkByCell.end() ? -1 : linkIt->second.mcIndex);
+        local.vm_raw_mcCollectionID.push_back(linkIt == simLinkByCell.end() ? 0 : linkIt->second.mcCollectionID);
+        local.vm_raw_nContribSim.push_back(linkIt == simLinkByCell.end() ? 0 : linkIt->second.nContribSim);
+        local.vm_raw_nContribMc.push_back(linkIt == simLinkByCell.end() ? 0 : linkIt->second.nContribMc);
+        local.vm_raw_dominantFrac.push_back(linkIt == simLinkByCell.end() ? nan : dominantFraction(linkIt->second));
+        local.vm_raw_totalEdep.push_back(linkIt == simLinkByCell.end() ? nan : linkIt->second.totalEDep);
+        local.vm_raw_mixedCell.push_back(linkIt == simLinkByCell.end() ? -1 : (linkIt->second.nContribMc > 1 ? 1 : 0));
     }
 
     for (const auto* rec : recHits) {
@@ -1468,32 +1470,32 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         const auto pos = rec->getPosition();
         const auto err = rec->getPositionError();
         const auto linkIt = simLinkByCell.find(cid);
-        vm_rec_x.push_back(pos.x);
-        vm_rec_y.push_back(pos.y);
-        vm_rec_z.push_back(pos.z);
-        vm_rec_covxx.push_back(err.xx);
-        vm_rec_covyy.push_back(err.yy);
-        vm_rec_covzz.push_back(err.zz);
-        vm_rec_time.push_back(rec->getTime());
-        vm_rec_time_err.push_back(rec->getTimeError());
-        vm_rec_edep.push_back(rec->getEdep());
-        vm_rec_edep_err.push_back(rec->getEdepError());
-        vm_rec_cellID.push_back(cid);
-        vm_rec_plane.push_back(plane);
-        vm_rec_station.push_back(stationOf(plane));
-        vm_rec_module.push_back(module);
-        vm_rec_side.push_back(side);
-        vm_rec_sensor.push_back(sensor);
-        vm_rec_pixX.push_back(getFieldOr(cid, "x", -1));
-        vm_rec_pixY.push_back(getFieldOr(cid, "y", -1));
-        vm_rec_pixZ.push_back(getFieldOr(cid, "z", -1));
-        vm_rec_mcIndex.push_back(linkIt == simLinkByCell.end() ? -1 : linkIt->second.mcIndex);
-        vm_rec_mcCollectionID.push_back(linkIt == simLinkByCell.end() ? 0 : linkIt->second.mcCollectionID);
-        vm_rec_nContribSim.push_back(linkIt == simLinkByCell.end() ? 0 : linkIt->second.nContribSim);
-        vm_rec_nContribMc.push_back(linkIt == simLinkByCell.end() ? 0 : linkIt->second.nContribMc);
-        vm_rec_dominantFrac.push_back(linkIt == simLinkByCell.end() ? nan : dominantFraction(linkIt->second));
-        vm_rec_totalEdep.push_back(linkIt == simLinkByCell.end() ? nan : linkIt->second.totalEDep);
-        vm_rec_mixedCell.push_back(linkIt == simLinkByCell.end() ? -1 : (linkIt->second.nContribMc > 1 ? 1 : 0));
+        local.vm_rec_x.push_back(pos.x);
+        local.vm_rec_y.push_back(pos.y);
+        local.vm_rec_z.push_back(pos.z);
+        local.vm_rec_covxx.push_back(err.xx);
+        local.vm_rec_covyy.push_back(err.yy);
+        local.vm_rec_covzz.push_back(err.zz);
+        local.vm_rec_time.push_back(rec->getTime());
+        local.vm_rec_time_err.push_back(rec->getTimeError());
+        local.vm_rec_edep.push_back(rec->getEdep());
+        local.vm_rec_edep_err.push_back(rec->getEdepError());
+        local.vm_rec_cellID.push_back(cid);
+        local.vm_rec_plane.push_back(plane);
+        local.vm_rec_station.push_back(stationOf(plane));
+        local.vm_rec_module.push_back(module);
+        local.vm_rec_side.push_back(side);
+        local.vm_rec_sensor.push_back(sensor);
+        local.vm_rec_pixX.push_back(getFieldOr(cid, "x", -1));
+        local.vm_rec_pixY.push_back(getFieldOr(cid, "y", -1));
+        local.vm_rec_pixZ.push_back(getFieldOr(cid, "z", -1));
+        local.vm_rec_mcIndex.push_back(linkIt == simLinkByCell.end() ? -1 : linkIt->second.mcIndex);
+        local.vm_rec_mcCollectionID.push_back(linkIt == simLinkByCell.end() ? 0 : linkIt->second.mcCollectionID);
+        local.vm_rec_nContribSim.push_back(linkIt == simLinkByCell.end() ? 0 : linkIt->second.nContribSim);
+        local.vm_rec_nContribMc.push_back(linkIt == simLinkByCell.end() ? 0 : linkIt->second.nContribMc);
+        local.vm_rec_dominantFrac.push_back(linkIt == simLinkByCell.end() ? nan : dominantFraction(linkIt->second));
+        local.vm_rec_totalEdep.push_back(linkIt == simLinkByCell.end() ? nan : linkIt->second.totalEDep);
+        local.vm_rec_mixedCell.push_back(linkIt == simLinkByCell.end() ? -1 : (linkIt->second.nContribMc > 1 ? 1 : 0));
     }
 
     // Seed survival is two distinct stages: the CKF either builds a trajectory
@@ -1582,20 +1584,20 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         }
     };
     fillSeeds(stubSeeds, ckfTrajectories, ckfTrajectoriesUnfiltered, hasCkfTrajectoriesUnfiltered,
-              vm_seed_quality, vm_seed_p, vm_seed_qOverP,
-              vm_seed_theta, vm_seed_phi, vm_seed_loc0, vm_seed_loc1,
-              vm_seed_sigma_qOverP, vm_seed_sigma_theta, vm_seed_sigma_phi,
-              vm_seed_nHits, vm_seed_charge, vm_seed_momentum_resolved, vm_seed_became_track,
-              vm_seed_made_unfiltered_track, vm_seed_survived_ambiguity,
-              vm_seed_n_unfiltered_tracks, vm_seed_n_filtered_tracks);
+              local.vm_seed_quality, local.vm_seed_p, local.vm_seed_qOverP,
+              local.vm_seed_theta, local.vm_seed_phi, local.vm_seed_loc0, local.vm_seed_loc1,
+              local.vm_seed_sigma_qOverP, local.vm_seed_sigma_theta, local.vm_seed_sigma_phi,
+              local.vm_seed_nHits, local.vm_seed_charge, local.vm_seed_momentum_resolved, local.vm_seed_became_track,
+              local.vm_seed_made_unfiltered_track, local.vm_seed_survived_ambiguity,
+              local.vm_seed_n_unfiltered_tracks, local.vm_seed_n_filtered_tracks);
     fillSeeds(truthSeeds, tsTrajectories, tsTrajectoriesUnfiltered, hasTsTrajectoriesUnfiltered,
-              vm_truth_seed_quality, vm_truth_seed_p, vm_truth_seed_qOverP,
-              vm_truth_seed_theta, vm_truth_seed_phi, vm_truth_seed_loc0, vm_truth_seed_loc1,
-              vm_truth_seed_sigma_qOverP, vm_truth_seed_sigma_theta, vm_truth_seed_sigma_phi,
-              vm_truth_seed_nHits, vm_truth_seed_charge, vm_truth_seed_momentum_resolved,
-              vm_truth_seed_became_track,
-              vm_truth_seed_made_unfiltered_track, vm_truth_seed_survived_ambiguity,
-              vm_truth_seed_n_unfiltered_tracks, vm_truth_seed_n_filtered_tracks);
+              local.vm_truth_seed_quality, local.vm_truth_seed_p, local.vm_truth_seed_qOverP,
+              local.vm_truth_seed_theta, local.vm_truth_seed_phi, local.vm_truth_seed_loc0, local.vm_truth_seed_loc1,
+              local.vm_truth_seed_sigma_qOverP, local.vm_truth_seed_sigma_theta, local.vm_truth_seed_sigma_phi,
+              local.vm_truth_seed_nHits, local.vm_truth_seed_charge, local.vm_truth_seed_momentum_resolved,
+              local.vm_truth_seed_became_track,
+              local.vm_truth_seed_made_unfiltered_track, local.vm_truth_seed_survived_ambiguity,
+              local.vm_truth_seed_n_unfiltered_tracks, local.vm_truth_seed_n_filtered_tracks);
 
     // Attribute each stub seed to MC truth from its constituent TrackerHits.
     // Each hit/cell contributes one unit distributed among the cell's MC energy fractions,
@@ -1627,12 +1629,12 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             }
         }
         const double normalized = totalWeight > 0.0 ? bestWeight / totalWeight : nan;
-        vm_seed_assoc_mcIndex.push_back(bestIndex);
-        vm_seed_assoc_mcCollectionID.push_back(bestCollection);
-        vm_seed_assoc_weight.push_back(normalized);
-        if (bestIndex == m_selPrimaryMcIndex && bestCollection == m_selPrimaryMcCollectionID &&
-            m_selPrimaryMcIndex >= 0) {
-            m_selPrimaryHasSeed = 1;
+        local.vm_seed_assoc_mcIndex.push_back(bestIndex);
+        local.vm_seed_assoc_mcCollectionID.push_back(bestCollection);
+        local.vm_seed_assoc_weight.push_back(normalized);
+        if (bestIndex == local.m_selPrimaryMcIndex && bestCollection == local.m_selPrimaryMcCollectionID &&
+            local.m_selPrimaryMcIndex >= 0) {
+            local.m_selPrimaryHasSeed = 1;
         }
     }
 
@@ -1653,14 +1655,14 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             }
         }
         for (const auto& [key, value] : best) {
-            if (std::get<1>(value) == m_selPrimaryMcCollectionID &&
-                std::get<2>(value) == m_selPrimaryMcIndex && m_selPrimaryMcIndex >= 0) return true;
+            if (std::get<1>(value) == local.m_selPrimaryMcCollectionID &&
+                std::get<2>(value) == local.m_selPrimaryMcIndex && local.m_selPrimaryMcIndex >= 0) return true;
         }
         return false;
     };
-    m_selPrimaryHasUnfilteredTrack =
+    local.m_selPrimaryHasUnfilteredTrack =
         hasCkfAssocsUnfiltered && collectionHasSelectedPrimary(ckfUnfilteredAssocs) ? 1 : 0;
-    m_selPrimaryHasFilteredTrack =
+    local.m_selPrimaryHasFilteredTrack =
         hasCkfAssocs && collectionHasSelectedPrimary(ckfAssocs) ? 1 : 0;
 
     auto fillChain = [&](TrackChain& out,
@@ -1710,15 +1712,15 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             }
         }
 
-        const double primaryP = m_selPrimaryP;
-        const double primaryPT = m_selPrimaryPT;
+        const double primaryP = local.m_selPrimaryP;
+        const double primaryPT = local.m_selPrimaryPT;
         const double truthQOverP =
-            (std::isfinite(primaryP) && primaryP > 0.0 && std::isfinite(m_selPrimaryCharge))
-                ? (m_selPrimaryCharge / primaryP) : nan;
+            (std::isfinite(primaryP) && primaryP > 0.0 && std::isfinite(local.m_selPrimaryCharge))
+                ? (local.m_selPrimaryCharge / primaryP) : nan;
         const double truthTheta = (std::isfinite(primaryP) && primaryP > 0.0)
-            ? std::acos(std::clamp(m_selPrimaryPz / primaryP, -1.0, 1.0)) : nan;
-        const double truthPhi = (std::isfinite(m_selPrimaryPx) && std::isfinite(m_selPrimaryPy))
-            ? std::atan2(m_selPrimaryPy, m_selPrimaryPx) : nan;
+            ? std::acos(std::clamp(local.m_selPrimaryPz / primaryP, -1.0, 1.0)) : nan;
+        const double truthPhi = (std::isfinite(local.m_selPrimaryPx) && std::isfinite(local.m_selPrimaryPy))
+            ? std::atan2(local.m_selPrimaryPy, local.m_selPrimaryPx) : nan;
 
         double bestAbsDeltaP = std::numeric_limits<double>::infinity();
         double bestTruthWeight = -1.0;
@@ -1832,9 +1834,9 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             const double sigQ = diagSigma(4);
             const double sigTh = diagSigma(3);
             const double sigPh = diagSigma(2);
-            const bool truthAssoc = (assocMc == m_selPrimaryMcIndex &&
-                                     assocCol == m_selPrimaryMcCollectionID &&
-                                     m_selPrimaryMcIndex >= 0);
+            const bool truthAssoc = (assocMc == local.m_selPrimaryMcIndex &&
+                                     assocCol == local.m_selPrimaryMcCollectionID &&
+                                     local.m_selPrimaryMcIndex >= 0);
             const double pullQ = (truthAssoc && std::isfinite(qOverP) && std::isfinite(truthQOverP) &&
                                   std::isfinite(sigQ) && sigQ > 0.0)
                 ? (qOverP - truthQOverP) / sigQ : nan;
@@ -2131,7 +2133,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                     trackPixel = snapToAclgadPixel(globalX, globalY, globalZ, sensorRef->cellID,
                                                    sensorRef->detElement);
                     if (!trackPixel.ok) {
-                        ++m_nPixelSnapFailed;
+                        ++local.m_nPixelSnapFailed;
                     }
                 }
 
@@ -2221,16 +2223,290 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         }
     };
 
-    fillChain(m_ts, tsTrajectories, tsTracks, tsEdmTracks, tsAssocs, tsActsTracks,
+    fillChain(local.m_ts, tsTrajectories, tsTracks, tsEdmTracks, tsAssocs, tsActsTracks,
               tsActsTrackStates, truthSeeds);
-    fillChain(m_ckf, ckfTrajectories, ckfTracks, ckfEdmTracks, ckfAssocs, ckfActsTracks,
+    fillChain(local.m_ckf, ckfTrajectories, ckfTracks, ckfEdmTracks, ckfAssocs, ckfActsTracks,
               ckfActsTrackStates, stubSeeds);
-    m_selPrimaryHasTruthMatchedTrack = m_ckf.truthMatched.index >= 0 ? 1 : 0;
-    m_nSensorMapExact = m_ts.nMapExact + m_ckf.nMapExact;
-    m_nSensorMapFallback = m_ts.nMapFallback + m_ckf.nMapFallback;
-    m_nSensorMapFailed = m_ts.nMapFailedPhysics + m_ckf.nMapFailedPhysics;
+    local.m_selPrimaryHasTruthMatchedTrack = local.m_ckf.truthMatched.index >= 0 ? 1 : 0;
+    local.m_nSensorMapExact = local.m_ts.nMapExact + local.m_ckf.nMapExact;
+    local.m_nSensorMapFallback = local.m_ts.nMapFallback + local.m_ckf.nMapFallback;
+    local.m_nSensorMapFailed = local.m_ts.nMapFailedPhysics + local.m_ckf.nMapFailedPhysics;
 
-    m_tree->Fill();
+    {
+        std::lock_guard<std::mutex> lock(m_fillMutex);
+        using std::swap;
+        swap(this->m_selPrimaryMeasurementReconstructable, local.m_selPrimaryMeasurementReconstructable);
+        swap(this->m_nMeasurementStationsSelectedPrimary, local.m_nMeasurementStationsSelectedPrimary);
+        swap(this->vm_truth_seed_made_unfiltered_track, local.vm_truth_seed_made_unfiltered_track);
+        swap(this->vm_truth_seed_n_unfiltered_tracks, local.vm_truth_seed_n_unfiltered_tracks);
+        swap(this->m_selPrimaryHasTruthMatchedTrack, local.m_selPrimaryHasTruthMatchedTrack);
+        swap(this->vm_truth_seed_survived_ambiguity, local.vm_truth_seed_survived_ambiguity);
+        swap(this->vm_truth_seed_momentum_resolved, local.vm_truth_seed_momentum_resolved);
+        swap(this->vm_truth_seed_n_filtered_tracks, local.vm_truth_seed_n_filtered_tracks);
+        swap(this->m_hasCkfTrajectoriesUnfiltered, local.m_hasCkfTrajectoriesUnfiltered);
+        swap(this->m_nSelectedPrimaryMeasurements, local.m_nSelectedPrimaryMeasurements);
+        swap(this->m_selPrimaryHasUnfilteredTrack, local.m_selPrimaryHasUnfilteredTrack);
+        swap(this->m_hasTsTrajectoriesUnfiltered, local.m_hasTsTrajectoriesUnfiltered);
+        swap(this->vm_seed_made_unfiltered_track, local.vm_seed_made_unfiltered_track);
+        swap(this->vm_seed_assoc_mcCollectionID, local.vm_seed_assoc_mcCollectionID);
+        swap(this->m_selPrimaryHasFilteredTrack, local.m_selPrimaryHasFilteredTrack);
+        swap(this->vm_seed_n_unfiltered_tracks, local.vm_seed_n_unfiltered_tracks);
+        swap(this->m_selPrimaryMcCollectionID, local.m_selPrimaryMcCollectionID);
+        swap(this->vm_truth_seed_sigma_qOverP, local.vm_truth_seed_sigma_qOverP);
+        swap(this->vm_truth_seed_became_track, local.vm_truth_seed_became_track);
+        swap(this->vm_seed_survived_ambiguity, local.vm_seed_survived_ambiguity);
+        swap(this->m_nSimHitsUnresolvedCellID, local.m_nSimHitsUnresolvedCellID);
+        swap(this->vm_truth_seed_sigma_theta, local.vm_truth_seed_sigma_theta);
+        swap(this->vm_seed_momentum_resolved, local.vm_seed_momentum_resolved);
+        swap(this->vm_seed_n_filtered_tracks, local.vm_seed_n_filtered_tracks);
+        swap(this->m_hasCkfTracksUnfiltered, local.m_hasCkfTracksUnfiltered);
+        swap(this->m_hasCkfAssocsUnfiltered, local.m_hasCkfAssocsUnfiltered);
+        swap(this->m_primaryMcCollectionID, local.m_primaryMcCollectionID);
+        swap(this->vm_truth_seed_sigma_phi, local.vm_truth_seed_sigma_phi);
+        swap(this->m_hasTsTracksUnfiltered, local.m_hasTsTracksUnfiltered);
+        swap(this->m_selPrimaryThscatMrad, local.m_selPrimaryThscatMrad);
+        swap(this->vm_truth_seed_quality, local.vm_truth_seed_quality);
+        swap(this->vm_raw_mcCollectionID, local.vm_raw_mcCollectionID);
+        swap(this->vm_rec_mcCollectionID, local.vm_rec_mcCollectionID);
+        swap(this->vm_seed_assoc_mcIndex, local.vm_seed_assoc_mcIndex);
+        swap(this->m_nMissingMcRelation, local.m_nMissingMcRelation);
+        swap(this->vm_seed_assoc_weight, local.vm_seed_assoc_weight);
+        swap(this->vm_seed_became_track, local.vm_seed_became_track);
+        swap(this->m_nSensorMapFallback, local.m_nSensorMapFallback);
+        swap(this->vm_truth_seed_qOverP, local.vm_truth_seed_qOverP);
+        swap(this->vm_truth_seed_charge, local.vm_truth_seed_charge);
+        swap(this->vm_seed_sigma_qOverP, local.vm_seed_sigma_qOverP);
+        swap(this->m_hasCkfTrajectories, local.m_hasCkfTrajectories);
+        swap(this->m_hasCkfTrackParams, local.m_hasCkfTrackParams);
+        swap(this->vm_truth_seed_theta, local.vm_truth_seed_theta);
+        swap(this->m_hasTsTrajectories, local.m_hasTsTrajectories);
+        swap(this->m_selPrimaryHasSeed, local.m_selPrimaryHasSeed);
+        swap(this->vm_raw_dominantFrac, local.vm_raw_dominantFrac);
+        swap(this->vm_truth_seed_nHits, local.vm_truth_seed_nHits);
+        swap(this->vm_rec_dominantFrac, local.vm_rec_dominantFrac);
+        swap(this->vm_seed_sigma_theta, local.vm_seed_sigma_theta);
+        swap(this->vm_mcCollectionIDEE, local.vm_mcCollectionIDEE);
+        swap(this->m_selPrimaryMcIndex, local.m_selPrimaryMcIndex);
+        swap(this->m_hasCkfActsTracks, local.m_hasCkfActsTracks);
+        swap(this->vm_rec_nContribSim, local.vm_rec_nContribSim);
+        swap(this->m_nSensorMapFailed, local.m_nSensorMapFailed);
+        swap(this->vm_truth_seed_loc1, local.vm_truth_seed_loc1);
+        swap(this->m_hasTsTrackParams, local.m_hasTsTrackParams);
+        swap(this->vm_truth_seed_loc0, local.vm_truth_seed_loc0);
+        swap(this->vm_mcCollectionIDP, local.vm_mcCollectionIDP);
+        swap(this->m_primaryStatusOut, local.m_primaryStatusOut);
+        swap(this->m_nStationsPrimary, local.m_nStationsPrimary);
+        swap(this->m_selPrimaryCharge, local.m_selPrimaryCharge);
+        swap(this->m_hasCkfActsStates, local.m_hasCkfActsStates);
+        swap(this->vm_raw_nContribSim, local.vm_raw_nContribSim);
+        swap(this->m_nPixelSnapFailed, local.m_nPixelSnapFailed);
+        swap(this->vm_rec_nContribMc, local.vm_rec_nContribMc);
+        swap(this->vm_isSelPrimaryEE, local.vm_isSelPrimaryEE);
+        swap(this->vm_mcCollectionID, local.vm_mcCollectionID);
+        swap(this->vm_raw_nContribMc, local.vm_raw_nContribMc);
+        swap(this->m_hasTsActsStates, local.m_hasTsActsStates);
+        swap(this->m_hasTsActsTracks, local.m_hasTsActsTracks);
+        swap(this->vm_truth_seed_phi, local.vm_truth_seed_phi);
+        swap(this->m_nSensorMapExact, local.m_nSensorMapExact);
+        swap(this->vm_seed_sigma_phi, local.vm_seed_sigma_phi);
+        swap(this->vm_isSelPrimaryP, local.vm_isSelPrimaryP);
+        swap(this->m_primaryMcIndex, local.m_primaryMcIndex);
+        swap(this->vm_rec_mixedCell, local.vm_rec_mixedCell);
+        swap(this->vm_rec_totalEdep, local.vm_rec_totalEdep);
+        swap(this->vm_raw_mixedCell, local.vm_raw_mixedCell);
+        swap(this->vm_raw_totalEdep, local.vm_raw_totalEdep);
+        swap(this->vm_raw_timeStamp, local.vm_raw_timeStamp);
+        swap(this->m_nCkfUnfiltered, local.m_nCkfUnfiltered);
+        swap(this->vm_aclgad_yPixT, local.vm_aclgad_yPixT);
+        swap(this->m_nTsUnfiltered, local.m_nTsUnfiltered);
+        swap(this->vm_aclgad_pixXR, local.vm_aclgad_pixXR);
+        swap(this->vm_truth_seed_p, local.vm_truth_seed_p);
+        swap(this->vm_aclgad_pixXT, local.vm_aclgad_pixXT);
+        swap(this->vm_aclgad_zPixR, local.vm_aclgad_zPixR);
+        swap(this->vm_aclgad_zPixT, local.vm_aclgad_zPixT);
+        swap(this->vm_isSelPrimary, local.vm_isSelPrimary);
+        swap(this->vm_aclgad_pixYR, local.vm_aclgad_pixYR);
+        swap(this->vm_seed_quality, local.vm_seed_quality);
+        swap(this->m_nMeasurements, local.m_nMeasurements);
+        swap(this->vm_rec_time_err, local.vm_rec_time_err);
+        swap(this->vm_rec_edep_err, local.vm_rec_edep_err);
+        swap(this->m_hasTruthSeeds, local.m_hasTruthSeeds);
+        swap(this->vm_aclgad_yPixR, local.vm_aclgad_yPixR);
+        swap(this->m_primaryCharge, local.m_primaryCharge);
+        swap(this->m_primaryPdgOut, local.m_primaryPdgOut);
+        swap(this->vm_aclgad_pixYT, local.vm_aclgad_pixYT);
+        swap(this->vm_aclgad_xPixR, local.vm_aclgad_xPixR);
+        swap(this->vm_aclgad_xPixT, local.vm_aclgad_xPixT);
+        swap(this->vm_isPrimaryEE, local.vm_isPrimaryEE);
+        swap(this->vm_raw_station, local.vm_raw_station);
+        swap(this->vm_cellIDEntry, local.vm_cellIDEntry);
+        swap(this->vm_seed_charge, local.vm_seed_charge);
+        swap(this->m_hasStubSeeds, local.m_hasStubSeeds);
+        swap(this->vm_seed_qOverP, local.vm_seed_qOverP);
+        swap(this->vm_rec_station, local.vm_rec_station);
+        swap(this->vm_rec_mcIndex, local.vm_rec_mcIndex);
+        swap(this->m_selPrimaryPT, local.m_selPrimaryPT);
+        swap(this->m_selPrimaryPz, local.m_selPrimaryPz);
+        swap(this->m_hasCkfAssocs, local.m_hasCkfAssocs);
+        swap(this->vm_raw_mcIndex, local.vm_raw_mcIndex);
+        swap(this->m_selPrimaryPx, local.m_selPrimaryPx);
+        swap(this->m_hasRawAssocs, local.m_hasRawAssocs);
+        swap(this->m_selPrimaryPy, local.m_selPrimaryPy);
+        swap(this->m_nCkfFiltered, local.m_nCkfFiltered);
+        swap(this->vm_sensorEntry, local.vm_sensorEntry);
+        swap(this->m_hasCkfTracks, local.m_hasCkfTracks);
+        swap(this->m_selPrimaryP, local.m_selPrimaryP);
+        swap(this->vm_sensorExit, local.vm_sensorExit);
+        swap(this->vm_raw_charge, local.vm_raw_charge);
+        swap(this->vm_aclgad_dyT, local.vm_aclgad_dyT);
+        swap(this->vm_isPrimaryP, local.vm_isPrimaryP);
+        swap(this->vm_rec_cellID, local.vm_rec_cellID);
+        swap(this->m_hasTsTracks, local.m_hasTsTracks);
+        swap(this->vm_aclgad_dxR, local.vm_aclgad_dxR);
+        swap(this->vm_raw_module, local.vm_raw_module);
+        swap(this->vm_rec_module, local.vm_rec_module);
+        swap(this->m_nTruthSeeds, local.m_nTruthSeeds);
+        swap(this->vm_raw_cellID, local.vm_raw_cellID);
+        swap(this->vm_cellIDExit, local.vm_cellIDExit);
+        swap(this->vm_seed_theta, local.vm_seed_theta);
+        swap(this->vm_aclgad_dxT, local.vm_aclgad_dxT);
+        swap(this->m_nTsFiltered, local.m_nTsFiltered);
+        swap(this->vm_rec_sensor, local.vm_rec_sensor);
+        swap(this->m_eventNumber, local.m_eventNumber);
+        swap(this->vm_aclgad_dzR, local.vm_aclgad_dzR);
+        swap(this->vm_aclgad_dzT, local.vm_aclgad_dzT);
+        swap(this->vm_aclgad_dyR, local.vm_aclgad_dyR);
+        swap(this->vm_raw_sensor, local.vm_raw_sensor);
+        swap(this->vm_seed_nHits, local.vm_seed_nHits);
+        swap(this->m_hasTsAssocs, local.m_hasTsAssocs);
+        swap(this->vm_seed_loc0, local.vm_seed_loc0);
+        swap(this->vm_timeEntry, local.vm_timeEntry);
+        swap(this->vm_rec_plane, local.vm_rec_plane);
+        swap(this->m_genBeamPPy, local.m_genBeamPPy);
+        swap(this->vm_stationEE, local.vm_stationEE);
+        swap(this->vm_rec_covxx, local.vm_rec_covxx);
+        swap(this->m_nStubSeeds, local.m_nStubSeeds);
+        swap(this->vm_cellFired, local.vm_cellFired);
+        swap(this->vm_seed_loc1, local.vm_seed_loc1);
+        swap(this->vm_mcIndexEE, local.vm_mcIndexEE);
+        swap(this->vm_rec_covzz, local.vm_rec_covzz);
+        swap(this->m_genBeamPPz, local.m_genBeamPPz);
+        swap(this->vm_raw_plane, local.vm_raw_plane);
+        swap(this->m_genBeamPPx, local.m_genBeamPPx);
+        swap(this->vm_isPrimary, local.vm_isPrimary);
+        swap(this->m_genBeamPPT, local.m_genBeamPPT);
+        swap(this->vm_rec_covyy, local.vm_rec_covyy);
+        swap(this->m_genBeamPz, local.m_genBeamPz);
+        swap(this->vm_seed_phi, local.vm_seed_phi);
+        swap(this->vm_rec_side, local.vm_rec_side);
+        swap(this->vm_moduleEE, local.vm_moduleEE);
+        swap(this->vm_mcIndexP, local.vm_mcIndexP);
+        swap(this->m_primaryPy, local.m_primaryPy);
+        swap(this->m_primaryPz, local.m_primaryPz);
+        swap(this->m_primaryPT, local.m_primaryPT);
+        swap(this->m_genBeamPx, local.m_genBeamPx);
+        swap(this->vm_rec_pixY, local.vm_rec_pixY);
+        swap(this->m_primaryPx, local.m_primaryPx);
+        swap(this->vm_rec_edep, local.vm_rec_edep);
+        swap(this->m_genBeamPT, local.m_genBeamPT);
+        swap(this->vm_rec_pixZ, local.vm_rec_pixZ);
+        swap(this->m_genBeamPy, local.m_genBeamPy);
+        swap(this->vm_rec_time, local.vm_rec_time);
+        swap(this->m_genBeamPP, local.m_genBeamPP);
+        swap(this->vm_raw_side, local.vm_raw_side);
+        swap(this->vm_nStepsEE, local.vm_nStepsEE);
+        swap(this->vm_timeExit, local.vm_timeExit);
+        swap(this->vm_stationP, local.vm_stationP);
+        swap(this->vm_rec_pixX, local.vm_rec_pixX);
+        swap(this->vm_statusEE, local.vm_statusEE);
+        swap(this->vm_mcIndex, local.vm_mcIndex);
+        swap(this->vm_pyEntry, local.vm_pyEntry);
+        swap(this->m_nRawHits, local.m_nRawHits);
+        swap(this->m_nSimHits, local.m_nSimHits);
+        swap(this->vm_pTEntry, local.vm_pTEntry);
+        swap(this->m_genBeamP, local.m_genBeamP);
+        swap(this->m_nRecHits, local.m_nRecHits);
+        swap(this->vm_pxEntry, local.vm_pxEntry);
+        swap(this->vm_moduleP, local.vm_moduleP);
+        swap(this->vm_pzEntry, local.vm_pzEntry);
+        swap(this->m_primaryP, local.m_primaryP);
+        swap(this->vm_station, local.vm_station);
+        swap(this->vm_statusP, local.vm_statusP);
+        swap(this->vm_planeEE, local.vm_planeEE);
+        swap(this->vm_sensorP, local.vm_sensorP);
+        swap(this->vm_status, local.vm_status);
+        swap(this->vm_pTExit, local.vm_pTExit);
+        swap(this->vm_sideEE, local.vm_sideEE);
+        swap(this->vm_seed_p, local.vm_seed_p);
+        swap(this->vm_xEntry, local.vm_xEntry);
+        swap(this->vm_zEntry, local.vm_zEntry);
+        swap(this->vm_yEntry, local.vm_yEntry);
+        swap(this->vm_planeP, local.vm_planeP);
+        swap(this->vm_pzExit, local.vm_pzExit);
+        swap(this->vm_pxExit, local.vm_pxExit);
+        swap(this->vm_sensor, local.vm_sensor);
+        swap(this->vm_module, local.vm_module);
+        swap(this->vm_pEntry, local.vm_pEntry);
+        swap(this->vm_pyExit, local.vm_pyExit);
+        swap(this->vm_cellID, local.vm_cellID);
+        swap(this->vm_yExit, local.vm_yExit);
+        swap(this->vm_rec_x, local.vm_rec_x);
+        swap(this->vm_pdgEE, local.vm_pdgEE);
+        swap(this->vm_pathP, local.vm_pathP);
+        swap(this->vm_pExit, local.vm_pExit);
+        swap(this->vm_rec_z, local.vm_rec_z);
+        swap(this->vm_timeP, local.vm_timeP);
+        swap(this->m_genPpy, local.m_genPpy);
+        swap(this->m_genPpx, local.m_genPpx);
+        swap(this->vm_rec_y, local.vm_rec_y);
+        swap(this->vm_sideP, local.vm_sideP);
+        swap(this->vm_plane, local.vm_plane);
+        swap(this->m_genPpz, local.m_genPpz);
+        swap(this->m_genPpT, local.m_genPpT);
+        swap(this->vm_xExit, local.vm_xExit);
+        swap(this->vm_zExit, local.vm_zExit);
+        swap(this->beam_pdg, local.beam_pdg);
+        swap(this->vm_pixX, local.vm_pixX);
+        swap(this->vm_path, local.vm_path);
+        swap(this->vm_pdgP, local.vm_pdgP);
+        swap(this->vm_detZ, local.vm_detZ);
+        swap(this->beam_pz, local.beam_pz);
+        swap(this->vm_time, local.vm_time);
+        swap(this->vm_pixZ, local.vm_pixZ);
+        swap(this->beam_pT, local.beam_pT);
+        swap(this->m_genPp, local.m_genPp);
+        swap(this->beam_py, local.beam_py);
+        swap(this->vm_pixY, local.vm_pixY);
+        swap(this->beam_px, local.beam_px);
+        swap(this->vm_detY, local.vm_detY);
+        swap(this->vm_side, local.vm_side);
+        swap(this->vm_eDep, local.vm_eDep);
+        swap(this->vm_detX, local.vm_detX);
+        swap(this->beam_p, local.beam_p);
+        swap(this->vm_pyP, local.vm_pyP);
+        swap(this->vm_pTP, local.vm_pTP);
+        swap(this->vm_pzP, local.vm_pzP);
+        swap(this->vm_pdg, local.vm_pdg);
+        swap(this->vm_pxP, local.vm_pxP);
+        swap(this->m_ckf, local.m_ckf);
+        swap(this->vm_zR, local.vm_zR);
+        swap(this->vm_zT, local.vm_zT);
+        swap(this->vm_py, local.vm_py);
+        swap(this->vm_px, local.vm_px);
+        swap(this->vm_pz, local.vm_pz);
+        swap(this->vm_yT, local.vm_yT);
+        swap(this->vm_yP, local.vm_yP);
+        swap(this->vm_pP, local.vm_pP);
+        swap(this->vm_xP, local.vm_xP);
+        swap(this->vm_pT, local.vm_pT);
+        swap(this->vm_yR, local.vm_yR);
+        swap(this->vm_xT, local.vm_xT);
+        swap(this->vm_xR, local.vm_xR);
+        swap(this->vm_zP, local.vm_zP);
+        swap(this->vm_p, local.vm_p);
+        swap(this->m_ts, local.m_ts);
+        m_tree->Fill();
+    }
 }
 
 void B0Trackers::BestSel::reset(double nan) {
