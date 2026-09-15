@@ -9,9 +9,21 @@ import math
 from pathlib import Path
 
 try:
-    from .b0_metrics import distribution_summary, pull_summary, stage_efficiencies, wilson_efficiency
+    from .b0_metrics import (
+        binned_efficiency,
+        distribution_summary,
+        pull_summary,
+        stage_efficiencies,
+        wilson_efficiency,
+    )
 except ImportError:
-    from b0_metrics import distribution_summary, pull_summary, stage_efficiencies, wilson_efficiency
+    from b0_metrics import (
+        binned_efficiency,
+        distribution_summary,
+        pull_summary,
+        stage_efficiencies,
+        wilson_efficiency,
+    )
 
 
 def _sanitize(value):
@@ -43,8 +55,12 @@ def _scalar(tree, name, np):
     return np.asarray(tree[name].array(library="np"))
 
 
+def _jagged(tree, name, ak):
+    return tree[name].array(library="ak")
+
+
 def _flat(tree, name, ak, np):
-    array = tree[name].array(library="ak")
+    array = _jagged(tree, name, ak)
     return np.asarray(ak.to_numpy(ak.flatten(array, axis=1)))
 
 
@@ -54,7 +70,61 @@ def _optional_scalar(tree, name, np, default):
     return _scalar(tree, name, np)
 
 
-def _plot_stage_flow(outdir, stages, np):
+def _unique_strings(tree, name, ak):
+    if name not in tree.keys():
+        return []
+    values = _jagged(tree, name, ak).to_list()
+    return sorted({str(value) for value in values})
+
+
+def _parse_edges(text: str) -> list[float]:
+    values = [float(item.strip()) for item in text.split(",") if item.strip()]
+    if len(values) < 2 or any(b <= a for a, b in zip(values, values[1:])):
+        raise argparse.ArgumentTypeError("bin edges must be a strictly increasing comma-separated list")
+    return values
+
+
+def _mapping_summary(methods, types, np):
+    methods = np.asarray(methods, dtype=int)
+    types = np.asarray(types, dtype=int)
+    physics = (types & (1 | 4 | 8)) != 0  # measurement | outlier | hole
+    exact = int(np.count_nonzero(physics & (methods == 1)))
+    fallback = int(np.count_nonzero(physics & (methods == 2)))
+    unresolved = int(np.count_nonzero(physics & (methods == 0)))
+    resolved = exact + fallback
+    total = resolved + unresolved
+    return {
+        "exact": exact,
+        "fallback": fallback,
+        "unresolved_physics_states": unresolved,
+        "exact_fraction_of_resolved": exact / resolved if resolved else math.nan,
+        "fallback_fraction_of_resolved": fallback / resolved if resolved else math.nan,
+        "unresolved_fraction_of_physics_states": unresolved / total if total else math.nan,
+    }
+
+
+def _station_residual_summary(station, state_type, resid0, resid1, np, extra_mask=None):
+    station = np.asarray(station, dtype=int)
+    state_type = np.asarray(state_type, dtype=int)
+    resid0 = np.asarray(resid0, dtype=float)
+    resid1 = np.asarray(resid1, dtype=float)
+    mask = (state_type & 1) != 0
+    if extra_mask is not None:
+        mask &= np.asarray(extra_mask, dtype=bool)
+
+    out: dict[str, dict] = {}
+    for value in sorted(set(station[mask].tolist())):
+        if value <= 0:
+            continue
+        use = mask & (station == value)
+        out[str(int(value))] = {
+            "loc0": distribution_summary(resid0[use].tolist()),
+            "loc1": distribution_summary(resid1[use].tolist()),
+        }
+    return out
+
+
+def _plot_stage_flow(outdir, stages, np, *, truth_specific: bool):
     import matplotlib.pyplot as plt
 
     names = ["Seed", "CKF candidate", "After ambiguity", "Truth matched"]
@@ -73,11 +143,16 @@ def _plot_stage_flow(outdir, stages, np):
     ax.errorbar(range(len(names)), values, yerr=yerr, fmt="o", capsize=4)
     ax.set_xticks(range(len(names)), names, rotation=15, ha="right")
     ax.set_ylim(0.0, 1.05)
-    ax.set_ylabel("Fraction of truth-eligible events")
-    ax.set_title("B0 reconstruction stage flow")
+    ax.set_ylabel("Fraction of truth-reachable events")
+    if truth_specific:
+        ax.set_title("Selected-primary B0 reconstruction flow")
+        filename = "selected_primary_stage_flow.png"
+    else:
+        ax.set_title("Event-level B0 object presence (not primary-specific)")
+        filename = "event_stage_presence.png"
     ax.grid(axis="y", alpha=0.25)
     fig.tight_layout()
-    fig.savefig(outdir / "stage_flow.png", dpi=160)
+    fig.savefig(outdir / filename, dpi=160)
     plt.close(fig)
 
 
@@ -99,7 +174,7 @@ def _plot_hist(outdir, values, filename, xlabel, title, np, bins=60, hist_range=
     plt.close(fig)
 
 
-def _plot_residual_rms(outdir, residuals, np):
+def _plot_residual_rms(outdir, residuals, np, filename, title):
     import matplotlib.pyplot as plt
 
     stations = sorted(int(station) for station in residuals)
@@ -116,15 +191,25 @@ def _plot_residual_rms(outdir, residuals, np):
     ax.set_xticks(x, [str(s) for s in stations])
     ax.set_xlabel("B0 station")
     ax.set_ylabel("Residual RMS [mm]")
-    ax.set_title("Measurement-state residual RMS")
+    ax.set_title(title)
     ax.legend()
     ax.grid(axis="y", alpha=0.2)
     fig.tight_layout()
-    fig.savefig(outdir / "measurement_residual_rms_by_station.png", dpi=160)
+    fig.savefig(outdir / filename, dpi=160)
     plt.close(fig)
 
 
-def build_report(path: Path, tree_name: str, min_stations: int, make_plots: bool, outdir: Path):
+def build_report(
+    path: Path,
+    tree_name: str,
+    min_stations: int,
+    make_plots: bool,
+    outdir: Path,
+    *,
+    momentum_bins: list[float],
+    angle_bins_mrad: list[float],
+    manifest: dict | None = None,
+):
     ak, np, uproot = _require_dependencies()
 
     with uproot.open(path) as root_file:
@@ -141,6 +226,11 @@ def build_report(path: Path, tree_name: str, min_stations: int, make_plots: bool
             "n_ckf_filtered",
             "ckf_truth_matched_trk_index",
             "sel_primary_p",
+            "sel_primary_px",
+            "sel_primary_py",
+            "sel_primary_thscat_mrad",
+            "sel_primary_mcIndex",
+            "sel_primary_mcCollectionID",
             "ckf_truth_matched_trk_delta_p",
             "ckf_truth_matched_trk_pull_qOverP",
             "ckf_truth_matched_trk_pull_theta",
@@ -163,32 +253,54 @@ def build_report(path: Path, tree_name: str, min_stations: int, make_plots: bool
         unavailable = [name for name, present in availability.items() if not present]
         if unavailable:
             raise SystemExit(
-                "cannot interpret stage efficiencies because these factories/collections were unavailable: "
+                "cannot interpret B0 reconstruction metrics because these factories/collections were unavailable: "
                 + ", ".join(unavailable)
                 + ". Missing is configuration absence, not reconstruction inefficiency."
             )
 
         schema = _scalar(tree, "schema_version", np)
+        schema_versions = sorted(set(int(x) for x in schema.tolist()))
         stations = _scalar(tree, "n_stations_primary", np)
         n_seeds = _scalar(tree, "n_stub_seeds", np)
         n_unfiltered = _scalar(tree, "n_ckf_unfiltered", np)
         n_filtered = _scalar(tree, "n_ckf_filtered", np)
-        matched_index = _scalar(tree, "ckf_truth_matched_trk_index", np)
+        matched_index = _scalar(tree, "ckf_truth_matched_trk_index", np).astype(int)
 
         eligible = stations >= min_stations
-        seeded = n_seeds > 0
-        unfiltered = n_unfiltered > 0
-        filtered = n_filtered > 0
         matched = matched_index >= 0
-        stages = stage_efficiencies(
+
+        # Schema 2 only knows whether *any* seed/candidate exists in an event.
+        # Keep these useful event-presence diagnostics, but do not call the
+        # first three stages selected-primary efficiencies.
+        event_stage_presence = stage_efficiencies(
             eligible.tolist(),
-            seeded.tolist(),
-            unfiltered.tolist(),
-            filtered.tolist(),
+            (n_seeds > 0).tolist(),
+            (n_unfiltered > 0).tolist(),
+            (n_filtered > 0).tolist(),
             matched.tolist(),
         )
 
+        selected_primary_stages = None
+        truth_stage_branches = {
+            "sel_primary_has_seed",
+            "sel_primary_has_unfiltered_track",
+            "sel_primary_has_filtered_track",
+            "sel_primary_has_truth_matched_track",
+        }
+        if truth_stage_branches <= keys:
+            selected_primary_stages = stage_efficiencies(
+                eligible.tolist(),
+                _scalar(tree, "sel_primary_has_seed", np).astype(bool).tolist(),
+                _scalar(tree, "sel_primary_has_unfiltered_track", np).astype(bool).tolist(),
+                _scalar(tree, "sel_primary_has_filtered_track", np).astype(bool).tolist(),
+                _scalar(tree, "sel_primary_has_truth_matched_track", np).astype(bool).tolist(),
+            )
+
         truth_p = _scalar(tree, "sel_primary_p", np).astype(float)
+        truth_theta_mrad = _scalar(tree, "sel_primary_thscat_mrad", np).astype(float)
+        truth_px = _scalar(tree, "sel_primary_px", np).astype(float)
+        truth_py = _scalar(tree, "sel_primary_py", np).astype(float)
+        truth_phi = np.arctan2(truth_py, truth_px)
         delta_p = _scalar(tree, "ckf_truth_matched_trk_delta_p", np).astype(float)
         matched_mask = eligible & matched & np.isfinite(truth_p) & (truth_p > 0.0) & np.isfinite(delta_p)
         rel_delta_p = np.full(tree.num_entries, np.nan, dtype=float)
@@ -207,7 +319,29 @@ def build_report(path: Path, tree_name: str, min_stations: int, make_plots: bool
             "pull_phi": pull_summary(
                 _scalar(tree, "ckf_truth_matched_trk_pull_phi", np)[matched_mask].tolist()
             ),
+            "efficiency_vs_truth_p_GeV": binned_efficiency(
+                truth_p.tolist(), matched.tolist(), eligible.tolist(), momentum_bins
+            ),
+            "efficiency_vs_scattering_angle_mrad": binned_efficiency(
+                truth_theta_mrad.tolist(), matched.tolist(), eligible.tolist(), angle_bins_mrad
+            ),
+            "truth_phi": distribution_summary(truth_phi[eligible].tolist()),
         }
+
+        # Resolution is meaningful only for truth-matched tracks. Report robust
+        # width and bias versus truth momentum/angle in the same explicit bins.
+        truth_metrics["relative_delta_p_vs_truth_p_GeV"] = []
+        for lo, hi in zip(momentum_bins, momentum_bins[1:]):
+            use = matched_mask & (truth_p >= lo) & (truth_p < hi)
+            truth_metrics["relative_delta_p_vs_truth_p_GeV"].append(
+                {"low": lo, "high": hi, **distribution_summary(rel_delta_p[use].tolist())}
+            )
+        truth_metrics["relative_delta_p_vs_scattering_angle_mrad"] = []
+        for lo, hi in zip(angle_bins_mrad, angle_bins_mrad[1:]):
+            use = matched_mask & (truth_theta_mrad >= lo) & (truth_theta_mrad < hi)
+            truth_metrics["relative_delta_p_vs_scattering_angle_mrad"].append(
+                {"low": lo, "high": hi, **distribution_summary(rel_delta_p[use].tolist())}
+            )
 
         seed_metrics = {}
         if {"seed_made_unfiltered_track", "seed_survived_ambiguity"} <= keys:
@@ -224,25 +358,15 @@ def build_report(path: Path, tree_name: str, min_stations: int, make_plots: bool
                 int(np.count_nonzero(ambiguity_den)),
             ).as_dict()
 
-        mapping = {}
-        if {"n_sensor_map_exact", "n_sensor_map_fallback", "n_sensor_map_failed"} <= keys:
-            exact = int(np.sum(_scalar(tree, "n_sensor_map_exact", np)))
-            fallback = int(np.sum(_scalar(tree, "n_sensor_map_fallback", np)))
-            failed = int(np.sum(_scalar(tree, "n_sensor_map_failed", np)))
-            resolved = exact + fallback
-            all_states = resolved + failed
-            mapping = {
-                "exact": exact,
-                "fallback": fallback,
-                "failed_raw": failed,
-                "exact_fraction_of_resolved": exact / resolved if resolved else math.nan,
-                "fallback_fraction_of_resolved": fallback / resolved if resolved else math.nan,
-                "failed_fraction_all_states": failed / all_states if all_states else math.nan,
-                "note": (
-                    "schema-2 n_sensor_map_failed also counts non-physics states that are not expected to map "
-                    "to a B0 sensor; use fallback_fraction_of_resolved for regression gating."
-                ),
-            }
+        mapping: dict[str, dict] = {}
+        for label, prefix in (("stub_ckf", "ckf_trk_"), ("truth_seeded", "trk_")):
+            needed = {prefix + "state_mapping_method", prefix + "state_type"}
+            if needed <= keys:
+                mapping[label] = _mapping_summary(
+                    _flat(tree, prefix + "state_mapping_method", ak, np),
+                    _flat(tree, prefix + "state_type", ak, np),
+                    np,
+                )
 
         residuals: dict[str, dict] = {}
         state_required = {
@@ -250,21 +374,76 @@ def build_report(path: Path, tree_name: str, min_stations: int, make_plots: bool
             "ckf_trk_state_resid_loc1",
             "ckf_trk_state_type",
             "ckf_trk_aclgad_station",
+            "ckf_trk_state_track_index",
         }
         if state_required <= keys:
-            resid0 = _flat(tree, "ckf_trk_state_resid_loc0", ak, np).astype(float)
-            resid1 = _flat(tree, "ckf_trk_state_resid_loc1", ak, np).astype(float)
-            state_type = _flat(tree, "ckf_trk_state_type", ak, np).astype(int)
-            state_station = _flat(tree, "ckf_trk_aclgad_station", ak, np).astype(int)
-            measurement_state = (state_type & 1) != 0
-            for station in sorted(set(state_station[measurement_state].tolist())):
-                if station <= 0:
-                    continue
-                mask = measurement_state & (state_station == station)
-                residuals[str(int(station))] = {
-                    "loc0": distribution_summary(resid0[mask].tolist()),
-                    "loc1": distribution_summary(resid1[mask].tolist()),
-                }
+            resid0_j = _jagged(tree, "ckf_trk_state_resid_loc0", ak)
+            resid1_j = _jagged(tree, "ckf_trk_state_resid_loc1", ak)
+            type_j = _jagged(tree, "ckf_trk_state_type", ak)
+            station_j = _jagged(tree, "ckf_trk_aclgad_station", ak)
+            track_index_j = _jagged(tree, "ckf_trk_state_track_index", ak)
+
+            resid0 = np.asarray(ak.to_numpy(ak.flatten(resid0_j, axis=1)), dtype=float)
+            resid1 = np.asarray(ak.to_numpy(ak.flatten(resid1_j, axis=1)), dtype=float)
+            state_type = np.asarray(ak.to_numpy(ak.flatten(type_j, axis=1)), dtype=int)
+            state_station = np.asarray(ak.to_numpy(ak.flatten(station_j, axis=1)), dtype=int)
+            state_track_index = np.asarray(ak.to_numpy(ak.flatten(track_index_j, axis=1)), dtype=int)
+
+            residuals["all_stub_ckf_tracks"] = _station_residual_summary(
+                state_station, state_type, resid0, resid1, np
+            )
+
+            # Schema 2 uses positional trajectory/ACTS-track indices. Preserve a
+            # separately labelled view for the nominal truth-matched track, but
+            # make the identity assumption explicit until schema 3 exports a
+            # stable parent-track ObjectID relation.
+            repeated_match = np.asarray(
+                ak.to_numpy(ak.flatten(ak.broadcast_arrays(track_index_j, matched_index)[1], axis=1)),
+                dtype=int,
+            )
+            nominal_selected = (repeated_match >= 0) & (state_track_index == repeated_match)
+            residuals["nominal_truth_matched_track_schema2_positional"] = _station_residual_summary(
+                state_station, state_type, resid0, resid1, np, nominal_selected
+            )
+
+        association_quality = {}
+        assoc_needed = {
+            "ckf_trk_assoc_mcIndex",
+            "ckf_trk_assoc_mcCollectionID",
+            "ckf_trk_assoc_weight",
+        }
+        if assoc_needed <= keys:
+            assoc_idx = _jagged(tree, "ckf_trk_assoc_mcIndex", ak)
+            assoc_col = _jagged(tree, "ckf_trk_assoc_mcCollectionID", ak)
+            assoc_w = _jagged(tree, "ckf_trk_assoc_weight", ak)
+            sel_idx = _scalar(tree, "sel_primary_mcIndex", np).astype(int)
+            sel_col = _scalar(tree, "sel_primary_mcCollectionID", np).astype(int)
+
+            n_tracks = np.asarray(ak.to_numpy(ak.num(assoc_idx, axis=1)), dtype=int)
+            sel_idx_b = ak.broadcast_arrays(assoc_idx, sel_idx)[1]
+            sel_col_b = ak.broadcast_arrays(assoc_col, sel_col)[1]
+            primary_assoc = (assoc_idx == sel_idx_b) & (assoc_col == sel_col_b)
+            n_primary_tracks = np.asarray(ak.to_numpy(ak.sum(primary_assoc, axis=1)), dtype=int)
+            duplicate_events = eligible & (n_primary_tracks > 1)
+            association_quality = {
+                "eligible_events_with_duplicate_primary_tracks": wilson_efficiency(
+                    int(np.count_nonzero(duplicate_events)), int(np.count_nonzero(eligible))
+                ).as_dict(),
+                "primary_associated_tracks_per_eligible_event": distribution_summary(
+                    n_primary_tracks[eligible].tolist()
+                ),
+                "all_ckf_tracks_per_eligible_event": distribution_summary(n_tracks[eligible].tolist()),
+            }
+            flat_weight = np.asarray(ak.to_numpy(ak.flatten(assoc_w, axis=1)), dtype=float)
+            flat_idx = np.asarray(ak.to_numpy(ak.flatten(assoc_idx, axis=1)), dtype=int)
+            low_purity = (flat_idx < 0) | ~np.isfinite(flat_weight) | (flat_weight < 0.5)
+            association_quality["low_purity_or_unmatched_track_fraction_proxy"] = (
+                float(np.mean(low_purity)) if low_purity.size else math.nan
+            )
+            association_quality["note"] = (
+                "This is an association-quality proxy, not a formal fake rate. A formal fake definition should be "
+                "fixed for the analysis sample and validated after stable track identity is exported."
+            )
 
         diagnostics = {
             name: int(np.sum(_optional_scalar(tree, name, np, 0)))
@@ -275,11 +454,17 @@ def build_report(path: Path, tree_name: str, min_stations: int, make_plots: bool
             ]
         }
 
+        provenance = {
+            "tree": tree_name,
+            "schema_versions": schema_versions,
+            "geometry_names": _unique_strings(tree, "geometry_name", ak),
+            "manifest": manifest or {},
+        }
+
         report = {
             "input": str(path),
-            "tree": tree_name,
             "events": int(tree.num_entries),
-            "schema_versions": sorted(set(int(x) for x in schema.tolist())),
+            "provenance": provenance,
             "availability": availability,
             "selection": {
                 "definition": f"selected primary crosses at least {min_stations} truth B0 stations",
@@ -289,21 +474,30 @@ def build_report(path: Path, tree_name: str, min_stations: int, make_plots: bool
                     "Use it primarily for controlled single-primary samples."
                 ),
             },
-            "stages": stages,
+            "event_stage_presence": event_stage_presence,
+            "event_stage_interpretation": (
+                "In schema 2, seed/unfiltered/filtered mean at least one such object exists anywhere in the event. "
+                "Only truth_matched is selected-primary-specific. Do not quote the first three as primary efficiency."
+            ),
+            "selected_primary_stages": selected_primary_stages,
             "truth_matched": truth_metrics,
             "seed_survival": seed_metrics,
             "sensor_mapping": mapping,
             "measurement_residuals_by_station": residuals,
             "residual_interpretation": (
-                "Current schema-2 state residuals use the best available state in the order "
-                "smoothed, filtered, predicted. They are fit diagnostics, not intrinsic detector-resolution measurements."
+                "Schema-2 state residuals use the best available state in the order smoothed, filtered, predicted. "
+                "They are fit diagnostics, not intrinsic detector-resolution measurements. The nominal selected-track "
+                "view additionally relies on schema-2 positional ACTS/trajectory alignment."
             ),
+            "track_association_quality": association_quality,
             "diagnostic_failures": diagnostics,
         }
 
         if make_plots:
             outdir.mkdir(parents=True, exist_ok=True)
-            _plot_stage_flow(outdir, stages, np)
+            _plot_stage_flow(outdir, event_stage_presence, np, truth_specific=False)
+            if selected_primary_stages is not None:
+                _plot_stage_flow(outdir, selected_primary_stages, np, truth_specific=True)
             _plot_hist(
                 outdir,
                 rel_delta_p[matched_mask],
@@ -326,7 +520,22 @@ def build_report(path: Path, tree_name: str, min_stations: int, make_plots: bool
                     np,
                     hist_range=(-5.0, 5.0),
                 )
-            _plot_residual_rms(outdir, residuals, np)
+            if residuals.get("all_stub_ckf_tracks"):
+                _plot_residual_rms(
+                    outdir,
+                    residuals["all_stub_ckf_tracks"],
+                    np,
+                    "measurement_residual_rms_all_tracks.png",
+                    "All stub-CKF measurement-state residual RMS",
+                )
+            if residuals.get("nominal_truth_matched_track_schema2_positional"):
+                _plot_residual_rms(
+                    outdir,
+                    residuals["nominal_truth_matched_track_schema2_positional"],
+                    np,
+                    "measurement_residual_rms_truth_matched_nominal.png",
+                    "Nominal truth-matched track residual RMS (schema-2 positional)",
+                )
 
     return report
 
@@ -337,9 +546,27 @@ def main() -> int:
     parser.add_argument("--tree", default="B0Trackers/hits")
     parser.add_argument("--output-dir", type=Path, default=Path("b0-report"))
     parser.add_argument("--min-stations", type=int, default=3)
+    parser.add_argument(
+        "--momentum-bins",
+        type=_parse_edges,
+        default=_parse_edges("0,5,10,15,20,30,40,60,100"),
+        help="truth-momentum bin edges in GeV",
+    )
+    parser.add_argument(
+        "--angle-bins-mrad",
+        type=_parse_edges,
+        default=_parse_edges("0,2,4,6,8,10,14,18,24,35"),
+        help="truth scattering-angle bin edges in mrad",
+    )
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        help="optional JSON run manifest (dataset/commits/material-map hash/config) embedded in provenance",
+    )
     parser.add_argument("--no-plots", action="store_true")
     args = parser.parse_args()
 
+    manifest = json.loads(args.manifest.read_text()) if args.manifest else None
     args.output_dir.mkdir(parents=True, exist_ok=True)
     report = build_report(
         args.input,
@@ -347,6 +574,9 @@ def main() -> int:
         args.min_stations,
         not args.no_plots,
         args.output_dir,
+        momentum_bins=args.momentum_bins,
+        angle_bins_mrad=args.angle_bins_mrad,
+        manifest=manifest,
     )
     output = args.output_dir / "summary.json"
     output.write_text(json.dumps(_sanitize(report), indent=2, sort_keys=True) + "\n")
