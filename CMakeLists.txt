@@ -48,17 +48,21 @@ if(BUILD_TESTING)
 
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
+        # Execute the test files directly instead of asking unittest to import
+        # them as tests.* modules. Some EIC shell Python environments provide an
+        # unrelated top-level `tests` package, which can shadow this repository's
+        # tests directory even when CTest's working directory is correct.
         add_test(
             NAME B0TrackersMetrics
-            COMMAND ${Python3_EXECUTABLE} -m unittest -v tests/test_b0_metrics.py
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_b0_metrics.py
         )
         add_test(
             NAME B0TrackersReportIntegration
-            COMMAND ${Python3_EXECUTABLE} -m unittest -v tests/test_b0_report_integration.py
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_b0_report_integration.py
         )
         add_test(
             NAME B0TrackersIdentityInvariants
-            COMMAND ${Python3_EXECUTABLE} -m unittest -v tests/test_identity_invariants.py
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_identity_invariants.py
         )
         set_tests_properties(
             B0TrackersMetrics
