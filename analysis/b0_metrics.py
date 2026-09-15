@@ -116,7 +116,7 @@ def stage_efficiencies(
     filtered: Sequence[bool],
     truth_matched: Sequence[bool],
 ) -> dict[str, dict[str, float | int]]:
-    """Summarize event-level B0 reconstruction flow for a selected truth particle."""
+    """Summarize reconstruction flow for one selected truth-particle definition."""
     arrays = [eligible, seeded, unfiltered, filtered, truth_matched]
     n = len(eligible)
     if any(len(a) != n for a in arrays):
@@ -149,6 +149,28 @@ def stage_efficiencies(
     return result
 
 
+def binned_efficiency(values: Sequence[float], passed: Sequence[bool], eligible: Sequence[bool], edges: Sequence[float]):
+    """Return Wilson efficiencies in explicit half-open bins [lo, hi), last bin inclusive."""
+    if not (len(values) == len(passed) == len(eligible)):
+        raise ValueError("values/passed/eligible must have identical length")
+    if len(edges) < 2 or any(b <= a for a, b in zip(edges, edges[1:])):
+        raise ValueError("edges must be strictly increasing")
+
+    rows = []
+    last = len(edges) - 2
+    for i, (lo, hi) in enumerate(zip(edges, edges[1:])):
+        den = num = 0
+        for value, ok, use in zip(values, passed, eligible):
+            if not use or not math.isfinite(float(value)):
+                continue
+            inside = lo <= value <= hi if i == last else lo <= value < hi
+            if inside:
+                den += 1
+                num += bool(ok)
+        rows.append({"low": float(lo), "high": float(hi), **wilson_efficiency(num, den).as_dict()})
+    return rows
+
+
 def nested_get(mapping: dict, path: str):
     value = mapping
     for part in path.split("."):
@@ -156,6 +178,21 @@ def nested_get(mapping: dict, path: str):
             raise KeyError(path)
         value = value[part]
     return value
+
+
+def provenance_mismatches(baseline: dict, candidate: dict, paths: Sequence[str]) -> list[dict]:
+    """Return exact-value provenance mismatches for paths that must agree."""
+    mismatches = []
+    for path in paths:
+        try:
+            base = nested_get(baseline, path)
+            cand = nested_get(candidate, path)
+        except KeyError:
+            mismatches.append({"path": path, "baseline": "<missing>", "candidate": "<missing>"})
+            continue
+        if base != cand:
+            mismatches.append({"path": path, "baseline": base, "candidate": cand})
+    return mismatches
 
 
 def evaluate_regression_policy(
