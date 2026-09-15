@@ -49,8 +49,6 @@ class B0ReportIntegrationTest(unittest.TestCase):
                     "ckf_trk_aclgad_station": ak.Array([[1, 2], [1], []]),
                     "ckf_trk_state_track_index": ak.Array([[0, 0], [0], []]),
                     "ckf_trk_state_mapping_method": ak.Array([[1, 1], [2], []]),
-                    "trk_state_mapping_method": ak.Array([[], [], []]),
-                    "trk_state_type": ak.Array([[], [], []]),
                     "ckf_trk_assoc_mcIndex": ak.Array([[7], [-1], []]),
                     "ckf_trk_assoc_mcCollectionID": ak.Array([[1], [0], []]),
                     "ckf_trk_assoc_weight": ak.Array([[1.0], [0.0], []]),
