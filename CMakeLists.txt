@@ -56,7 +56,15 @@ if(BUILD_TESTING)
             NAME B0TrackersReportIntegration
             COMMAND ${Python3_EXECUTABLE} -m unittest -v tests/test_b0_report_integration.py
         )
-        set_tests_properties(B0TrackersMetrics B0TrackersReportIntegration PROPERTIES
-            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(
+            NAME B0TrackersIdentityInvariants
+            COMMAND ${Python3_EXECUTABLE} -m unittest -v tests/test_identity_invariants.py
+        )
+        set_tests_properties(
+            B0TrackersMetrics
+            B0TrackersReportIntegration
+            B0TrackersIdentityInvariants
+            PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        )
     endif()
 endif()
