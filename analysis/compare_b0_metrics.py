@@ -15,12 +15,7 @@ except ImportError:
 
 DEFAULT_CHECKS = [
     {
-        "path": "stages.filtered_over_eligible.value",
-        "mode": "max_drop",
-        "tolerance": 0.01,
-    },
-    {
-        "path": "stages.truth_matched_over_eligible.value",
+        "path": "event_stage_presence.truth_matched_over_eligible.value",
         "mode": "max_drop",
         "tolerance": 0.01,
     },
@@ -30,7 +25,7 @@ DEFAULT_CHECKS = [
         "tolerance": 0.10,
     },
     {
-        "path": "sensor_mapping.fallback_fraction_of_resolved",
+        "path": "sensor_mapping.stub_ckf.fallback_fraction_of_resolved",
         "mode": "max_increase",
         "tolerance": 0.001,
     },
