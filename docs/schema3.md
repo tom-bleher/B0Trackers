@@ -24,7 +24,7 @@ The legacy `*_index` fields remain for compatibility, but track summaries also e
 - `*_seed_index`
 - `*_identity_valid`
 
-Track-to-trajectory matching is performed through the EDM `Track.trajectory` relation rather than collection position.
+Track-to-trajectory matching is performed through the EDM `Track.trajectory` relation rather than collection position. Schema 3 deliberately has **no positional fallback** from `trajectory[i]` to `Track[i]` or `TrackParameters[i]`: if the explicit relation or trajectory-owned parameters are unavailable, identity/parameters remain unresolved rather than being guessed from parallel collection order.
 
 ACTS states additionally store their parent seed and, when a seed maps uniquely to one EDM track, the stable parent-track identity:
 
