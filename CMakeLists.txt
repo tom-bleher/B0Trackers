@@ -51,18 +51,29 @@ if(BUILD_TESTING)
         # Run test files directly and pin PYTHONPATH to this source tree. This
         # avoids both a foreign top-level `tests` package and environment-specific
         # import-path behavior inside eic-shell.
-        foreach(test_name test_file IN ITEMS
-                B0TrackersMetrics test_b0_metrics.py
-                B0TrackersReportIntegration test_b0_report_integration.py
-                B0TrackersIdentityInvariants test_identity_invariants.py)
-            add_test(
-                NAME ${test_name}
-                COMMAND ${CMAKE_COMMAND} -E env
-                    "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
-                    ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${test_file}
-            )
-            set_tests_properties(${test_name} PROPERTIES
-                WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-        endforeach()
+        add_test(
+            NAME B0TrackersMetrics
+            COMMAND ${CMAKE_COMMAND} -E env
+                "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
+                ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_b0_metrics.py
+        )
+        add_test(
+            NAME B0TrackersReportIntegration
+            COMMAND ${CMAKE_COMMAND} -E env
+                "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
+                ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_b0_report_integration.py
+        )
+        add_test(
+            NAME B0TrackersIdentityInvariants
+            COMMAND ${CMAKE_COMMAND} -E env
+                "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}"
+                ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_identity_invariants.py
+        )
+        set_tests_properties(
+            B0TrackersMetrics
+            B0TrackersReportIntegration
+            B0TrackersIdentityInvariants
+            PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        )
     endif()
 endif()
