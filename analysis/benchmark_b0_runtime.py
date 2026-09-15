@@ -100,6 +100,7 @@ def _command(args, threads_count: int, mode: str, podio: Path, hist: Path) -> li
         command.append(f"-Pjana:nevents={args.events}")
     if mode == "b0trackers":
         command.append(args.plugin_arg)
+        command.extend(args.plugin_extra_arg)
     command.append(str(args.input))
     return command
 
@@ -121,8 +122,16 @@ def main() -> int:
     parser.add_argument("--warmup", type=int, default=1, help="unrecorded warmup pairs per thread count")
     parser.add_argument("--seed", type=int, default=73021, help="deterministic randomization seed")
     parser.add_argument("--events", type=int, help="optional fixed jana:nevents for quicker comparisons")
-    parser.add_argument("--arg", action="append", default=[], help="additional eicrecon argument; repeat as needed")
+    parser.add_argument(
+        "--arg", action="append", default=[], help="eicrecon argument applied to baseline and plugin runs"
+    )
     parser.add_argument("--plugin-arg", default="-Pplugins=B0Trackers")
+    parser.add_argument(
+        "--plugin-extra-arg",
+        action="append",
+        default=[],
+        help="argument applied only when B0Trackers is enabled; repeat as needed",
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("b0-runtime"))
     parser.add_argument("--keep-output", action="store_true")
     args = parser.parse_args()
@@ -225,6 +234,7 @@ def main() -> int:
         "events": args.events,
         "extra_args": args.arg,
         "plugin_arg": args.plugin_arg,
+        "plugin_extra_args": args.plugin_extra_arg,
         "summary": summary,
     }
     summary_path = args.output_dir / "summary.json"

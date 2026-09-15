@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -56,6 +57,9 @@ private:
     double m_fallbackMaxNormalMm = 2.0;
     bool m_failOnEmptySensorMap = true;
     bool m_failOnIncompleteSurfaceMap = false;
+    bool m_enableTruthSeededChain = true;
+    bool m_enableStubSeededChain = true;
+    bool m_writeTrackStates = true;
 
     struct SensorRef {
         std::uint64_t cellID = 0;
@@ -82,6 +86,12 @@ private:
         int nSharedHits = -1;
         int ndf = -1;
         int assocMcIndex = -1;
+        std::uint32_t assocMcCollectionID = 0;
+        int objectIndex = -1;
+        std::uint32_t objectCollectionID = 0;
+        int seedIndex = -1;
+        std::uint32_t seedCollectionID = 0;
+        int identityValid = 0;
         int pdg = 0;
         int charge = 0;
         int momentumResolved = 0;
@@ -110,16 +120,29 @@ private:
         std::vector<double> chi2;
         std::vector<int>    ndf;
         std::vector<int>    index, charge, type, pdg;
+        std::vector<int>    object_index, seed_index, identity_valid;
+        std::vector<std::uint32_t> object_collectionID, seed_collectionID;
+        std::array<std::vector<double>, 21> cov_upper;
         std::vector<int>    nStates, nMeasurements, nOutliers, nHoles, nSharedHits;
         std::vector<int>    assoc_mcIndex;
         std::vector<std::uint32_t> assoc_mcCollectionID;
         std::vector<double> assoc_weight;
 
         std::vector<int>    state_track_index, state_index, state_acts_index, state_type, state_pdg;
+        std::vector<int>    state_parent_seed_index, state_parent_track_index, state_parent_identity_valid;
+        std::vector<std::uint32_t> state_parent_seed_collectionID, state_parent_track_collectionID;
+        std::vector<int>    state_estimate_kind;
         std::vector<int>    state_mapping_method;
         std::vector<std::uint64_t> state_surface;
         std::vector<double> state_loc0, state_loc1;
         std::vector<double> state_meas_loc0, state_meas_loc1, state_resid_loc0, state_resid_loc1;
+        std::vector<int>    state_meas_dim, state_proj_index0, state_proj_index1;
+        std::vector<double> state_meas_cov00, state_meas_cov01, state_meas_cov11;
+        std::vector<double> state_pred_loc0, state_pred_loc1, state_pred_theta, state_pred_phi;
+        std::vector<double> state_pred_qOverP, state_pred_time;
+        std::array<std::vector<double>, 21> state_pred_cov_upper;
+        std::vector<double> state_innov0, state_innov1, state_innov_pull0, state_innov_pull1;
+        std::vector<double> state_innov_chi2;
         std::vector<double> x_on_plane, y_on_plane, z_on_plane;
         std::vector<double> aclgad_xPix, aclgad_yPix, aclgad_zPix;
         std::vector<double> aclgad_dx, aclgad_dy, aclgad_dz;
@@ -127,6 +150,11 @@ private:
         std::vector<int>    aclgad_plane, aclgad_module, aclgad_side, aclgad_sensor, aclgad_station;
         std::vector<std::uint64_t> aclgad_cellID;
         std::vector<double> state_theta, state_phi, state_qOverP, state_time;
+
+        int nMapExact = 0;
+        int nMapFallback = 0;
+        int nMapFailedPhysics = 0;
+        int nMapUnmappedNonPhysics = 0;
 
         BestSel oracle;
         BestSel truthMatched;
@@ -149,6 +177,7 @@ private:
 
     int m_primaryPdg = 2212;
     int m_primaryStatus = 1;
+    int m_minMeasurementStations = 3;
 
     // SimTrackerHit-level (cell centers of truth hits, not RecHits).
     std::vector<double> vm_xR, vm_yR, vm_zR;
@@ -215,6 +244,9 @@ private:
     std::vector<int>    vm_seed_nHits, vm_seed_charge, vm_seed_momentum_resolved, vm_seed_became_track;
     std::vector<int>    vm_seed_made_unfiltered_track, vm_seed_survived_ambiguity;
     std::vector<int>    vm_seed_n_unfiltered_tracks, vm_seed_n_filtered_tracks;
+    std::vector<int>    vm_seed_assoc_mcIndex;
+    std::vector<std::uint32_t> vm_seed_assoc_mcCollectionID;
+    std::vector<double> vm_seed_assoc_weight;
     std::vector<double> vm_truth_seed_quality, vm_truth_seed_p, vm_truth_seed_qOverP;
     std::vector<double> vm_truth_seed_theta, vm_truth_seed_phi, vm_truth_seed_loc0, vm_truth_seed_loc1;
     std::vector<double> vm_truth_seed_sigma_qOverP, vm_truth_seed_sigma_theta, vm_truth_seed_sigma_phi;
@@ -246,6 +278,13 @@ private:
     double m_selPrimaryThscatMrad = 0.0;
     double m_selPrimaryCharge = 0.0;
     int m_nStationsPrimary = 0; // selected primary only
+    int m_nSelectedPrimaryMeasurements = -1;
+    int m_nMeasurementStationsSelectedPrimary = -1;
+    int m_selPrimaryMeasurementReconstructable = -1;
+    int m_selPrimaryHasSeed = 0;
+    int m_selPrimaryHasUnfilteredTrack = 0;
+    int m_selPrimaryHasFilteredTrack = 0;
+    int m_selPrimaryHasTruthMatchedTrack = 0;
 
     int m_nSimHits = 0;
     int m_nRawHits = 0;
@@ -285,4 +324,5 @@ private:
     bool m_hasCkfActsStates = false;
     bool m_hasCkfActsTracks = false;
     bool m_hasCkfTracksUnfiltered = false;
+    bool m_hasCkfAssocsUnfiltered = false;
 };
