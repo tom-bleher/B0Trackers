@@ -85,6 +85,82 @@ class B0ReportIntegrationTest(unittest.TestCase):
                 0,
             )
             self.assertIn("1", report["measurement_residuals_by_station"]["all_stub_ckf_tracks"])
+            self.assertIn(
+                "nominal_truth_matched_track_schema2_positional",
+                report["measurement_residuals_by_station"],
+            )
+
+    def test_schema3_residuals_use_stable_parent_object_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            root_path = tmp / "toy-schema3.root"
+            with uproot.recreate(root_path) as root:
+                root["B0Trackers/hits"] = {
+                    "schema_version": np.array([3], dtype=np.int32),
+                    "geometry_name": ak.Array(["toy-geom"]),
+                    "n_stations_primary": np.array([4], dtype=np.int32),
+                    "n_stub_seeds": np.array([1], dtype=np.int32),
+                    "n_ckf_unfiltered": np.array([2], dtype=np.int32),
+                    "n_ckf_filtered": np.array([2], dtype=np.int32),
+                    "ckf_truth_matched_trk_index": np.array([0], dtype=np.int32),
+                    "ckf_truth_matched_trk_object_index": np.array([42], dtype=np.int32),
+                    "ckf_truth_matched_trk_object_collectionID": np.array([7], dtype=np.uint32),
+                    "ckf_truth_matched_trk_identity_valid": np.array([1], dtype=np.int32),
+                    "sel_primary_p": np.array([20.0]),
+                    "sel_primary_px": np.array([0.2]),
+                    "sel_primary_py": np.array([0.1]),
+                    "sel_primary_thscat_mrad": np.array([12.0]),
+                    "sel_primary_mcIndex": np.array([8], dtype=np.int32),
+                    "sel_primary_mcCollectionID": np.array([1], dtype=np.uint32),
+                    "sel_primary_has_seed": np.array([1], dtype=np.int32),
+                    "sel_primary_has_unfiltered_track": np.array([1], dtype=np.int32),
+                    "sel_primary_has_filtered_track": np.array([1], dtype=np.int32),
+                    "sel_primary_has_truth_matched_track": np.array([1], dtype=np.int32),
+                    "ckf_truth_matched_trk_delta_p": np.array([0.1]),
+                    "ckf_truth_matched_trk_pull_qOverP": np.array([0.1]),
+                    "ckf_truth_matched_trk_pull_theta": np.array([0.2]),
+                    "ckf_truth_matched_trk_pull_phi": np.array([-0.1]),
+                    "has_stub_seeds": np.array([True]),
+                    "has_ckf_tracks_unfiltered": np.array([True]),
+                    "has_ckf_tracks": np.array([True]),
+                    "has_ckf_assocs": np.array([True]),
+                    "has_ckf_assocs_unfiltered": np.array([True]),
+                    "ckf_trk_state_resid_loc0": ak.Array([[0.01, 0.50, 0.02]]),
+                    "ckf_trk_state_resid_loc1": ak.Array([[0.02, 0.40, -0.01]]),
+                    "ckf_trk_state_type": ak.Array([[1, 1, 1]]),
+                    "ckf_trk_aclgad_station": ak.Array([[1, 1, 2]]),
+                    "ckf_trk_state_track_index": ak.Array([[0, 1, 0]]),
+                    "ckf_trk_state_mapping_method": ak.Array([[1, 1, 1]]),
+                    "ckf_trk_state_parent_track_index": ak.Array([[42, 99, 42]]),
+                    "ckf_trk_state_parent_track_collectionID": ak.Array([[7, 7, 7]]),
+                    "ckf_trk_state_parent_identity_valid": ak.Array([[1, 1, 1]]),
+                    "n_simhits_unresolved_cellid": np.array([0], dtype=np.int32),
+                    "n_missing_mc_relation": np.array([0], dtype=np.int32),
+                    "n_pixel_snap_failed": np.array([0], dtype=np.int32),
+                }
+
+            report = build_report(
+                root_path,
+                "B0Trackers/hits",
+                3,
+                False,
+                tmp / "report",
+                momentum_bins=[0.0, 40.0],
+                angle_bins_mrad=[0.0, 30.0],
+                manifest=None,
+            )
+
+            residuals = report["measurement_residuals_by_station"]
+            self.assertIn("truth_matched_track_stable_identity", residuals)
+            self.assertNotIn("nominal_truth_matched_track_schema2_positional", residuals)
+            # The second station-1 state belongs to track ObjectID (7,99), so it
+            # must not contaminate the selected truth-matched track (7,42).
+            self.assertEqual(
+                residuals["truth_matched_track_stable_identity"]["1"]["loc0"]["n"], 1
+            )
+            self.assertEqual(
+                residuals["all_stub_ckf_tracks"]["1"]["loc0"]["n"], 2
+            )
 
     def test_synthetic_schema3_stable_identity_and_innovation(self):
         with tempfile.TemporaryDirectory() as tmp:
