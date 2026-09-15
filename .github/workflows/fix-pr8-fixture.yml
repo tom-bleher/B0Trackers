@@ -1,0 +1,39 @@
+name: Fix PR8 schema3 fixture
+
+on:
+  push:
+    branches:
+      - feat/phase-space-provenance
+    paths:
+      - '.github/workflows/fix-pr8-fixture.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/phase-space-provenance
+          fetch-depth: 0
+      - name: Update fixture and remove helper workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('tests/test_b0_report_integration.py')
+          s = p.read_text()
+          old = '                    "has_ckf_assocs": np.array([True]),\n                    "ckf_trk_state_resid_loc0":'
+          new = '                    "has_ckf_assocs": np.array([True]),\n                    "has_ckf_assocs_unfiltered": np.array([True]),\n                    "ckf_trk_state_resid_loc0":'
+          if old not in s:
+              raise SystemExit('target schema3 fixture not found')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          rm .github/workflows/fix-pr8-fixture.yml
+          git add tests/test_b0_report_integration.py .github/workflows/fix-pr8-fixture.yml
+          git commit -m "test: update schema3 report fixture"
+          git push origin HEAD:feat/phase-space-provenance
