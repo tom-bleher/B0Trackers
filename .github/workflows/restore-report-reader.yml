@@ -1,0 +1,41 @@
+name: Restore report reader
+
+on:
+  push:
+    branches:
+      - feat/schema3-track-diagnostics
+    paths:
+      - '.github/workflows/restore-report-reader.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  restore:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/schema3-track-diagnostics
+          fetch-depth: 0
+      - name: Restore pre-edit report and patch scalar reader only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout 02679ddf482e23b2c97ac756b33fd28ad27f3cc1 -- analysis/b0_report.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('analysis/b0_report.py')
+          text = p.read_text()
+          old = '''def _scalar(tree, name, np):\n    return np.asarray(tree[name].array(library="np"))\n'''
+          new = '''def _scalar(tree, name, np):\n    # Use the Awkward path for both TTrees and RNTuples. Some uproot/RNTuple\n    # versions fail on direct field reads with library="np".\n    import awkward as ak\n\n    return np.asarray(ak.to_numpy(tree[name].array(library="ak")))\n'''
+          if old not in text:
+              raise SystemExit('scalar helper not found in restored report')
+          p.write_text(text.replace(old, new, 1))
+          PY
+          rm -f .github/workflows/restore-report-reader.yml
+          git add -A
+          git commit -m "fix(report): support scalar reads from TTrees and RNTuples"
+          git push origin HEAD:feat/schema3-track-diagnostics
