@@ -146,9 +146,27 @@ def build_report(path: Path, tree_name: str, min_stations: int, make_plots: bool
             "ckf_truth_matched_trk_pull_theta",
             "ckf_truth_matched_trk_pull_phi",
         }
-        missing = sorted(required - keys)
+        availability_required = {
+            "has_stub_seeds",
+            "has_ckf_tracks_unfiltered",
+            "has_ckf_tracks",
+            "has_ckf_assocs",
+        }
+        missing = sorted((required | availability_required) - keys)
         if missing:
             raise SystemExit("missing required B0Trackers branches: " + ", ".join(missing))
+
+        availability = {
+            name: bool(np.all(_scalar(tree, name, np).astype(bool)))
+            for name in sorted(availability_required)
+        }
+        unavailable = [name for name, present in availability.items() if not present]
+        if unavailable:
+            raise SystemExit(
+                "cannot interpret stage efficiencies because these factories/collections were unavailable: "
+                + ", ".join(unavailable)
+                + ". Missing is configuration absence, not reconstruction inefficiency."
+            )
 
         schema = _scalar(tree, "schema_version", np)
         stations = _scalar(tree, "n_stations_primary", np)
@@ -262,6 +280,7 @@ def build_report(path: Path, tree_name: str, min_stations: int, make_plots: bool
             "tree": tree_name,
             "events": int(tree.num_entries),
             "schema_versions": sorted(set(int(x) for x in schema.tolist())),
+            "availability": availability,
             "selection": {
                 "definition": f"selected primary crosses at least {min_stations} truth B0 stations",
                 "min_stations": min_stations,
