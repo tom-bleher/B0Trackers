@@ -1,0 +1,25 @@
+{
+  "compatibility_paths": [
+    "provenance.manifest.input_dataset",
+    "provenance.manifest.eicrecon_commit",
+    "provenance.manifest.epic_commit",
+    "provenance.manifest.material_map_sha256"
+  ],
+  "checks": [
+    {
+      "path": "event_stage_presence.truth_matched_over_eligible.value",
+      "mode": "max_drop",
+      "tolerance": 0.01
+    },
+    {
+      "path": "truth_matched.relative_delta_p.std",
+      "mode": "max_fractional_increase",
+      "tolerance": 0.10
+    },
+    {
+      "path": "sensor_mapping.stub_ckf.fallback_fraction_of_resolved",
+      "mode": "max_increase",
+      "tolerance": 0.001
+    }
+  ]
+}

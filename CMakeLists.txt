@@ -45,4 +45,18 @@ if(BUILD_TESTING)
     # The checks report failures explicitly rather than through assert(), so they
     # stay live under -DNDEBUG.
     add_test(NAME B0TrackersHelpers COMMAND B0TrackersHelpers_test)
+
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(
+            NAME B0TrackersMetrics
+            COMMAND ${Python3_EXECUTABLE} -m unittest -v tests/test_b0_metrics.py
+        )
+        add_test(
+            NAME B0TrackersReportIntegration
+            COMMAND ${Python3_EXECUTABLE} -m unittest -v tests/test_b0_report_integration.py
+        )
+        set_tests_properties(B0TrackersMetrics B0TrackersReportIntegration PROPERTIES
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    endif()
 endif()
