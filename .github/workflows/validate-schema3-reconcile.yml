@@ -1,0 +1,39 @@
+name: Validate reconciled schema3
+
+on:
+  push:
+    branches:
+      - feat/schema3-track-diagnostics
+    paths:
+      - '.github/workflows/validate-schema3-reconcile.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-light:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install analysis dependencies
+        run: python -m pip install --disable-pip-version-check numpy awkward uproot
+      - name: Configure, build, and test
+        run: |
+          cmake -S . -B build -DB0Trackers_BUILD_PLUGIN=OFF -DBUILD_TESTING=ON
+          cmake --build build --parallel 2
+          ctest --test-dir build --output-on-failure
+
+  eic-shell:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cvmfs-contrib/github-action-cvmfs@v5
+      - name: Configure, build, and test plugin
+        uses: eic/run-cvmfs-osg-eic-shell@main
+        with:
+          organization: eicweb
+          platform-release: eic_xl:nightly
+          run: |
+            cmake -S . -B build-plugin -DBUILD_TESTING=ON
+            cmake --build build-plugin --parallel 2
+            ctest --test-dir build-plugin --output-on-failure
