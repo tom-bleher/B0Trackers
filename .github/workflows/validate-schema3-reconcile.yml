@@ -10,6 +10,7 @@ on:
 permissions:
   contents: read
 
+# Temporary integration validation for the schema3 + runtime-controls reconciliation.
 jobs:
   dependency-light:
     runs-on: ubuntu-24.04
