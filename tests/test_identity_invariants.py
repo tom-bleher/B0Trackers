@@ -43,8 +43,9 @@ class StableIdentityTest(unittest.TestCase):
         source = (Path(__file__).parents[1] / "B0Trackers.cc").read_text()
         self.assertIn("edmTrackByTrajectory", source)
         self.assertIn("stableTrackIt", source)
-        self.assertNotIn("edmTracks[trajIndex]", source)
         self.assertIn("trackObjectsBySeed", source)
+        self.assertNotIn("edmTracks[trajIndex]", source)
+        self.assertNotIn("tracks[trajIndex]", source)
 
 
 if __name__ == "__main__":
