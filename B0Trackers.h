@@ -60,6 +60,8 @@ private:
     bool m_enableTruthSeededChain = true;
     bool m_enableStubSeededChain = true;
     bool m_writeTrackStates = true;
+    std::string m_dumpSurfaceMap;
+    void dumpSurfaceMap(const std::string& path);
 
     struct SensorRef {
         std::uint64_t cellID = 0;

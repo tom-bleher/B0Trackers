@@ -6,11 +6,14 @@
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <fstream>
 #include <initializer_list>
 #include <limits>
 #include <map>
 #include <mutex>
 #include <set>
+#include <sstream>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <unordered_map>
@@ -219,6 +222,8 @@ void B0Trackers::Init() {
                              "Request and analyze the stub-seeded B0 CKF chain");
     app->SetDefaultParameter("B0Trackers:write_track_states", m_writeTrackStates,
                              "Request ACTS track containers and write per-state diagnostics");
+    app->SetDefaultParameter("B0Trackers:dump_surface_map", m_dumpSurfaceMap,
+                             "Write B0 ACTS surface dump JSON at init (empty disables)");
 
     if (const char* cfg = std::getenv("DETECTOR_CONFIG")) {
         m_geometryName = cfg;
@@ -738,6 +743,74 @@ void B0Trackers::Init() {
             " sensors mapped exactly); set B0Trackers:fail_on_incomplete_surface_map=0 "
             "to fall back to nearest-sensor matching");
     }
+    if (!m_dumpSurfaceMap.empty()) {
+        try {
+            dumpSurfaceMap(m_dumpSurfaceMap);
+        } catch (const std::exception& e) {
+            m_log->warn("B0Trackers: surface dump to '{}' failed (continuing): {}",
+                        m_dumpSurfaceMap, e.what());
+        }
+    }
+}
+
+void B0Trackers::dumpSurfaceMap(const std::string& path) {
+    std::ostringstream out;
+    out << "{\n  \"geometry\": \"" << m_geometryName << "\",\n";
+    out << "  \"sensors\": [\n";
+    for (std::size_t k = 0; k < m_sensorRefs.size(); ++k) {
+        const auto& s = m_sensorRefs[k];
+        out << "    {\"cellID\": " << s.cellID << ", \"plane\": " << s.plane
+            << ", \"module\": " << s.module << ", \"side\": " << s.side
+            << ", \"sensor\": " << s.sensor << ", \"station\": " << s.station << "}"
+            << (k + 1 < m_sensorRefs.size() ? ",\n" : "\n");
+    }
+    out << "  ],\n  \"surfaces\": [\n";
+    if (m_actsGeoProvider) {
+        const auto& ctx = m_actsGeoProvider->getActsGeometryContext();
+        std::unordered_map<std::uint64_t, std::size_t> cellToIdx;
+        for (std::size_t k = 0; k < m_sensorRefs.size(); ++k) {
+            cellToIdx.emplace(m_sensorRefs[k].cellID, k);
+        }
+        const Acts::Vector3 beamDir(0.0, 0.0, 1.0);
+        bool first = true;
+        for (const auto& [volumeID, surface] : m_actsGeoProvider->surfaceMap()) {
+            if (surface == nullptr) {
+                continue;
+            }
+            int station = -1;
+            const auto it = cellToIdx.find(volumeID);
+            if (it != cellToIdx.end()) {
+                station = m_sensorRefs[it->second].station;
+            }
+            const auto center = surface->center(ctx);
+            const auto normal = surface->normal(ctx, center, beamDir);
+            const auto& bounds = surface->bounds();
+            const auto values = bounds.values();
+            if (!first) {
+                out << ",\n";
+            }
+            first = false;
+            out << "    {\"volumeID\": " << volumeID << ", \"geometryId\": "
+                << surface->geometryId().value() << ", \"station\": " << station
+                << ", \"center\": [" << center.x() << ", " << center.y() << ", "
+                << center.z() << "], \"normal\": [" << normal.x() << ", "
+                << normal.y() << ", " << normal.z() << "], \"boundsType\": "
+                << static_cast<int>(bounds.type()) << ", \"boundsValues\": [";
+            for (std::size_t k = 0; k < values.size(); ++k) {
+                out << (k > 0 ? ", " : "") << values[k];
+            }
+            out << "]}";
+        }
+    }
+    out << "\n  ]\n}\n";
+    std::ofstream file(path);
+    if (!file) {
+        throw std::runtime_error("B0Trackers: cannot open surface dump '" + path + "'");
+    }
+    file << out.str();
+    file.flush();
+    m_log->info("B0Trackers: wrote ACTS surface dump with {} sensors to '{}'",
+                m_sensorRefs.size(), path);
 }
 
 void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
