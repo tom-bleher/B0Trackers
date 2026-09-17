@@ -9,8 +9,10 @@ parallel to the stub-seed input order.
 
 Candidate and marker rows live in the UNFILTERED ACTS containers
 (`B0TrackerCKFActsTrackStatesUnfiltered` / `B0TrackerCKFActsTracksUnfiltered`),
-written by `CKFTracking` only when it runs with `numB0StationsMin > 0` (both B0
-chains qualify; central tracking is untouched). They are read only when
+written by `CKFTracking` only when it runs with `numB0StationsMin > 0` AND the
+opt-in `B0KeepCKFDiagnostics` factory flag (`-P...:B0KeepCKFDiagnostics=true`;
+both B0 chains qualify; central tracking is untouched, and production B0 jobs
+leave the flag off). They are read only when
 `write_track_states=1` (the default). Without them, every finding quantity is
 `-1` (unknown) while seed- and truth-level quantities are still filled; see
 `has_ckf_acts_states_unfiltered` / `has_ckf_acts_tracks_unfiltered`.
@@ -22,10 +24,18 @@ non-accepted rows, so filtered collections and all EDM products are unchanged.
 
 ## Branches
 
-- `ckfdiag_seed_index`: PODIO index of the seed.
+- `ckfdiag_seed_index` + `ckfdiag_seed_collectionID`: full PODIO ObjectID
+  of the seed (an index alone is not an identity).
 - `ckfdiag_seed_n_stations`: distinct B0 stations over the seed's TrackerHits.
+- `ckfdiag_seed_assoc_weight`: dominant MC energy fraction of the seed
+  (same definition as `seed_assoc_weight`).
 - `ckfdiag_truth_p / _theta / _phi`: associated MC particle kinematics (NaN if
-  the seed has no truth association).
+  the seed has no truth association). `_theta` is the GLOBAL polar angle;
+  use `_thscat_mrad` below for physics.
+- `ckfdiag_truth_thscat_mrad`: beam-relative scattering angle of the
+  associated MC particle, exactly the `sel_primary_thscat_mrad` definition
+  (angle to the status-4 proton beam, mrad). This is the theta for
+  `P(CKF failure reason | theta)`.
 - `ckfdiag_n_candidates`: non-marker CKF candidates for this seed
   (`-1` without the unfiltered ACTS containers).
 - `ckfdiag_n_accepted`: candidates passing all CKF cuts (pre-ambiguity).
@@ -41,16 +51,25 @@ non-accepted rows, so filtered collections and all EDM products are unchanged.
 - `ckfdiag_best_n_states`: states on the best candidate; proxy for N surfaces
   visited (passive surfaces are excluded by the CKF navigator configuration).
 - `ckfdiag_best_n_meas / _n_holes / _n_outliers`: accepted measurements /
-  holes / outliers on the best candidate. Holes mark surfaces reached with no
-  compatible measurement.
-- `ckfdiag_best_last_station`: max station over measurement and hole states.
+  holes / outliers on the best candidate, with OUTLIER PRECEDENCE: in
+  ACTS 44 an outlier state carries both MeasurementFlag and OutlierFlag, so
+  a state counts as an outlier first, then as an accepted measurement
+  (`MeasurementFlag && !OutlierFlag`), then as a hole. Holes mark surfaces
+  reached with no compatible measurement.
+- `ckfdiag_best_last_station`: max station over outlier, measurement and hole
+  states (where CKF got, including incompatible surfaces).
 - `ckfdiag_best_first_hole_station`: min hole station, approximating the first
   station with no compatible measurement (`-1` if none).
 - `ckfdiag_best_station_mask`: bitmask of measurement stations (bit `s`).
 - `ckfdiag_cand_per_station[seed][station]`: number of candidates with a
   measurement at each station (station = the `station` branch numbering;
   inner size = `ckfdiag_max_station + 1`).
-- `ckfdiag_max_station`: event-level maximum station (sizes the inner vector).
+- `ckfdiag_max_station`: geometry-defined maximum station from the sensor
+  map (sizes the inner vector), not stations observed in this event.
+- Status-code sync note: the `ckfdiag` code mirrors in `B0TrackersHelpers.h`
+  duplicate EICrecon's `b0counters::ckfdiag` values by hand (the standalone
+  helper build has no EICrecon headers, so a cross-repo `static_assert` is
+  impossible there); keep them in sync manually and check the helper test.
 
 ## Stated limits (require ACTS actor instrumentation, not implemented)
 

@@ -80,10 +80,14 @@
 //                            navigation. best_* describe the best non-marker
 //                            candidate (accepted > nMeas > fewer holes).
 //                            cand_per_station[seed][station] counts candidates
-//                            with a measurement at that station (station = the
-//                            `station` branch numbering; inner size =
-//                            ckfdiag_max_station+1). truth_p/theta/phi are the
-//                            associated MC particle kinematics (NaN if none).
+//                            with an accepted measurement at that station
+//                            (station = the `station` branch numbering; inner
+//                            size = ckfdiag_max_station+1, geometry-defined).
+//                            truth_p/theta/phi are the associated MC particle
+//                            kinematics (NaN if none); truth_theta is global
+//                            polar, truth_thscat_mrad is beam-relative.
+//                            Outlier precedence: outlier > accepted measurement
+//                            (MeasurementFlag && !OutlierFlag) > hole.
 //   firstHit/lastHit       = aliases of Entry/Exit (min/max-time SimHits)
 //   Output tree is in -Phistsfile (default eicrecon.root), directory B0Trackers.
 
@@ -533,9 +537,12 @@ void B0Trackers::Init() {
     m_tree->Branch("truth_seed_n_filtered_tracks", &vm_truth_seed_n_filtered_tracks);
 
     m_tree->Branch("ckfdiag_seed_index", &vm_ckfdiag_seed_index);
+    m_tree->Branch("ckfdiag_seed_collectionID", &vm_ckfdiag_seed_collectionID);
     m_tree->Branch("ckfdiag_seed_n_stations", &vm_ckfdiag_seed_n_stations);
+    m_tree->Branch("ckfdiag_seed_assoc_weight", &vm_ckfdiag_seed_assoc_weight);
     m_tree->Branch("ckfdiag_truth_p", &vm_ckfdiag_truth_p);
     m_tree->Branch("ckfdiag_truth_theta", &vm_ckfdiag_truth_theta);
+    m_tree->Branch("ckfdiag_truth_thscat_mrad", &vm_ckfdiag_truth_thscat_mrad);
     m_tree->Branch("ckfdiag_truth_phi", &vm_ckfdiag_truth_phi);
     m_tree->Branch("ckfdiag_n_candidates", &vm_ckfdiag_n_candidates);
     m_tree->Branch("ckfdiag_n_accepted", &vm_ckfdiag_n_accepted);
@@ -928,8 +935,10 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     local.vm_truth_seed_made_unfiltered_track.clear(); local.vm_truth_seed_survived_ambiguity.clear();
     local.vm_truth_seed_n_unfiltered_tracks.clear(); local.vm_truth_seed_n_filtered_tracks.clear();
 
-    local.vm_ckfdiag_seed_index.clear(); local.vm_ckfdiag_seed_n_stations.clear();
-    local.vm_ckfdiag_truth_p.clear(); local.vm_ckfdiag_truth_theta.clear(); local.vm_ckfdiag_truth_phi.clear();
+    local.vm_ckfdiag_seed_index.clear(); local.vm_ckfdiag_seed_collectionID.clear();
+    local.vm_ckfdiag_seed_n_stations.clear(); local.vm_ckfdiag_seed_assoc_weight.clear();
+    local.vm_ckfdiag_truth_p.clear(); local.vm_ckfdiag_truth_theta.clear();
+    local.vm_ckfdiag_truth_thscat_mrad.clear(); local.vm_ckfdiag_truth_phi.clear();
     local.vm_ckfdiag_n_candidates.clear(); local.vm_ckfdiag_n_accepted.clear(); local.vm_ckfdiag_stage.clear();
     local.vm_ckfdiag_find_err_class.clear(); local.vm_ckfdiag_find_err_value.clear();
     local.vm_ckfdiag_best_status.clear();
@@ -1812,15 +1821,19 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 }
                 ++cand.nStates;
                 const int typeMask = trackStateTypeMask(state.typeFlags());
-                const bool isMeas = (typeMask & kStateMeasurement) != 0;
-                const bool isHole = (typeMask & kStateHole) != 0;
+                // Outlier precedence: in ACTS 44 an outlier state carries both
+                // MeasurementFlag and OutlierFlag, so testing measurement first
+                // miscounts outliers as measurements (and their stations as
+                // measurement stations). An accepted measurement excludes outliers.
                 const bool isOutlier = (typeMask & kStateOutlier) != 0;
-                if (isMeas) {
+                const bool isMeas = ((typeMask & kStateMeasurement) != 0) && !isOutlier;
+                const bool isHole = ((typeMask & kStateHole) != 0) && !isOutlier;
+                if (isOutlier) {
+                    ++cand.nOutliers;
+                } else if (isMeas) {
                     ++cand.nMeas;
                 } else if (isHole) {
                     ++cand.nHoles;
-                } else if (isOutlier) {
-                    ++cand.nOutliers;
                 } else {
                     continue;
                 }
@@ -1833,7 +1846,11 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 if (station < 0) {
                     continue;
                 }
-                if (isMeas) {
+                if (isOutlier) {
+                    // Reached but incompatible: counts toward where CKF got,
+                    // never toward measurement stations.
+                    cand.lastStation = std::max(cand.lastStation, station);
+                } else if (isMeas) {
                     cand.measStations.insert(station);
                     cand.lastStation = std::max(cand.lastStation, station);
                 } else if (isHole) {
@@ -1845,22 +1862,21 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             ckfCandsBySeed[seedPos].push_back(std::move(cand));
         }
     }
+    // Geometry-defined station bound from the sensor map (validated at init),
+    // not from stations observed in candidates this event.
     int ckfdiagEventMaxStation = -1;
-    for (const auto& seedEntry : ckfCandsBySeed) {
-        for (const auto& cand : seedEntry.second) {
-            for (const int station : cand.measStations) {
-                ckfdiagEventMaxStation = std::max(ckfdiagEventMaxStation, station);
-            }
-        }
-    }
-    if (ckfdiagEventMaxStation > 4096) {
-        ckfdiagEventMaxStation = -1;
+    for (const auto& ref : m_sensorRefs) {
+        ckfdiagEventMaxStation = std::max(ckfdiagEventMaxStation, ref.station);
     }
     local.m_ckfdiagMaxStation = ckfdiagEventMaxStation;
 
     for (std::size_t i = 0; i < stubSeeds.size(); ++i) {
         const auto* seed = stubSeeds[i];
         local.vm_ckfdiag_seed_index.push_back(seed != nullptr ? seed->id().index : -1);
+        local.vm_ckfdiag_seed_collectionID.push_back(seed != nullptr ? seed->id().collectionID : 0);
+        local.vm_ckfdiag_seed_assoc_weight.push_back(
+            (seed != nullptr && i < local.vm_seed_assoc_weight.size())
+                ? local.vm_seed_assoc_weight[i] : nan);
         int nSeedStations = (seed == nullptr) ? -1 : 0;
         if (seed != nullptr) {
             std::set<int> seedStations;
@@ -1880,7 +1896,8 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             nSeedStations = static_cast<int>(seedStations.size());
         }
         local.vm_ckfdiag_seed_n_stations.push_back(nSeedStations);
-        double truthP = nan, truthTheta = nan, truthPhi = nan;
+        double truthP = nan, truthTheta = nan, truthPhi = nan, truthPx = nan, truthPy = nan,
+               truthPz = nan;
         if (seed != nullptr && i < stubSeedBestMc.size()) {
             if (const auto* mc = findMc(stubSeedBestMc[i].first, stubSeedBestMc[i].second);
                 mc != nullptr) {
@@ -1890,11 +1907,29 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                     truthP = pmag;
                     truthTheta = std::acos(std::clamp(mp.z / pmag, -1.0, 1.0));
                     truthPhi = std::atan2(mp.y, mp.x);
+                    truthPx = mp.x;
+                    truthPy = mp.y;
+                    truthPz = mp.z;
                 }
+            }
+        }
+        // Beam-relative scattering angle: same definition as sel_primary_thscat_mrad
+        // (angle to the status-4 proton beam), NOT the global polar angle above.
+        double truthThscatMrad = nan;
+        if (std::isfinite(truthP) && truthP > 0.0 && !local.m_genPpx.empty()) {
+            const double bx = local.m_genPpx[0];
+            const double by = local.m_genPpy[0];
+            const double bz = local.m_genPpz[0];
+            const double bn = std::sqrt(bx * bx + by * by + bz * bz);
+            if (bn > 0.0) {
+                const double cosang = std::clamp(
+                    (truthPx * bx + truthPy * by + truthPz * bz) / (truthP * bn), -1.0, 1.0);
+                truthThscatMrad = 1.0e3 * std::acos(cosang);
             }
         }
         local.vm_ckfdiag_truth_p.push_back(truthP);
         local.vm_ckfdiag_truth_theta.push_back(truthTheta);
+        local.vm_ckfdiag_truth_thscat_mrad.push_back(truthThscatMrad);
         local.vm_ckfdiag_truth_phi.push_back(truthPhi);
 
         int nCand = -1, nAcc = -1, stage = b0trk::ckfdiag::kStageUnknown;
@@ -2863,9 +2898,12 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         swap(this->vm_p, local.vm_p);
         swap(this->m_ts, local.m_ts);
         swap(this->vm_ckfdiag_seed_index, local.vm_ckfdiag_seed_index);
+        swap(this->vm_ckfdiag_seed_collectionID, local.vm_ckfdiag_seed_collectionID);
         swap(this->vm_ckfdiag_seed_n_stations, local.vm_ckfdiag_seed_n_stations);
+        swap(this->vm_ckfdiag_seed_assoc_weight, local.vm_ckfdiag_seed_assoc_weight);
         swap(this->vm_ckfdiag_truth_p, local.vm_ckfdiag_truth_p);
         swap(this->vm_ckfdiag_truth_theta, local.vm_ckfdiag_truth_theta);
+        swap(this->vm_ckfdiag_truth_thscat_mrad, local.vm_ckfdiag_truth_thscat_mrad);
         swap(this->vm_ckfdiag_truth_phi, local.vm_ckfdiag_truth_phi);
         swap(this->vm_ckfdiag_n_candidates, local.vm_ckfdiag_n_candidates);
         swap(this->vm_ckfdiag_n_accepted, local.vm_ckfdiag_n_accepted);

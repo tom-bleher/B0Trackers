@@ -253,7 +253,9 @@ private:
         // stub-seed input order (including null entries); use
         // ckfdiag_seed_index (PODIO ObjectID) for a robust join.
         std::vector<int>    vm_ckfdiag_seed_index, vm_ckfdiag_seed_n_stations;
+        std::vector<std::uint32_t> vm_ckfdiag_seed_collectionID;
         std::vector<double> vm_ckfdiag_truth_p, vm_ckfdiag_truth_theta, vm_ckfdiag_truth_phi;
+        std::vector<double> vm_ckfdiag_truth_thscat_mrad, vm_ckfdiag_seed_assoc_weight;
         std::vector<int>    vm_ckfdiag_n_candidates, vm_ckfdiag_n_accepted, vm_ckfdiag_stage;
         std::vector<int>    vm_ckfdiag_find_err_class, vm_ckfdiag_find_err_value;
         std::vector<int>    vm_ckfdiag_best_status;
@@ -427,7 +429,9 @@ private:
     std::vector<int>    vm_truth_seed_n_unfiltered_tracks, vm_truth_seed_n_filtered_tracks;
 
     std::vector<int>    vm_ckfdiag_seed_index, vm_ckfdiag_seed_n_stations;
+    std::vector<std::uint32_t> vm_ckfdiag_seed_collectionID;
     std::vector<double> vm_ckfdiag_truth_p, vm_ckfdiag_truth_theta, vm_ckfdiag_truth_phi;
+    std::vector<double> vm_ckfdiag_truth_thscat_mrad, vm_ckfdiag_seed_assoc_weight;
     std::vector<int>    vm_ckfdiag_n_candidates, vm_ckfdiag_n_accepted, vm_ckfdiag_stage;
     std::vector<int>    vm_ckfdiag_find_err_class, vm_ckfdiag_find_err_value;
     std::vector<int>    vm_ckfdiag_best_status;
