@@ -10,7 +10,7 @@
 
 namespace b0trk {
 
-inline constexpr int kSchemaVersion = 4;
+inline constexpr int kSchemaVersion = 6;
 
 inline constexpr int kMapUnresolved = 0;
 inline constexpr int kMapExact      = 1;
@@ -136,6 +136,52 @@ inline bool isBetterCandidate(bool accepted, int nMeas, int nHoles, unsigned sta
 }
 
 } // namespace ckfdiag
+
+// Innovation compatibility for one track state: r = m - H x_pred,
+// S = V + H C_pred H^T with (v00, v01, v11) the measurement covariance
+// and (c00, c01, c11) the projected predicted covariance. Mirrors the
+// per-state computation in B0Trackers.cc so the filtered and unfiltered
+// dumps share one definition. measDim follows ACTS calibratedSize (1 or 2
+// for B0 pixels); anything else yields NaNs. Pulls use the S diagonal even
+// when S is singular (then chi2 is NaN), matching what the CKF measurement
+// selector computed from the same quantities.
+struct InnovCompat {
+    double pull0 = quietNaN();
+    double pull1 = quietNaN();
+    double chi2 = quietNaN();
+};
+
+inline InnovCompat innovCompat(int measDim, double r0, double r1, double v00, double v01,
+                               double v11, double c00, double c01, double c11) {
+    InnovCompat out;
+    if (measDim == 1) {
+        const double s00 = v00 + c00;
+        if (s00 > 0.0 && std::isfinite(s00)) {
+            out.pull0 = r0 / std::sqrt(s00);
+            out.chi2  = r0 * r0 / s00;
+        }
+        return out;
+    }
+    if (measDim == 2) {
+        const double s00 = v00 + c00;
+        const double s01 = v01 + c01;
+        const double s11 = v11 + c11;
+        if (!std::isfinite(s00) || !std::isfinite(s01) || !std::isfinite(s11)) {
+            return out;
+        }
+        if (s00 <= 0.0 || s11 <= 0.0) {
+            return out;
+        }
+        out.pull0 = r0 / std::sqrt(s00);
+        out.pull1 = r1 / std::sqrt(s11);
+        const double det = s00 * s11 - s01 * s01;
+        if (det > 0.0 && std::isfinite(det)) {
+            out.chi2 = (s11 * r0 * r0 - 2.0 * s01 * r0 * r1 + s00 * r1 * r1) / det;
+        }
+        return out;
+    }
+    return out;
+}
 
 // Layer DetElement names:
 //   B0Tracker_layer{station}_{front|back}_P  (realistic)

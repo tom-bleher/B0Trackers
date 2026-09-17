@@ -267,6 +267,23 @@ private:
         std::vector<int>    vm_ckfdiag_best_station_mask;
         std::vector<std::vector<int>> vm_ckfdiag_cand_per_station;
         int m_ckfdiagMaxStation = -1;
+        // Per-state CKF compatibility (schema 5). Flat across the event:
+        // one row per physics state on a mapped B0 station of every
+        // unfiltered candidate (accepted and rejected). Join to seeds via
+        // ckfdiag_unf_seedpos (position in the stub-seed input order).
+        // kind: 0 = accepted measurement, 1 = outlier, 2 = hole.
+        std::vector<int> vm_ckfdiag_unf_seedpos, vm_ckfdiag_unf_status;
+        std::vector<int> vm_ckfdiag_unf_station, vm_ckfdiag_unf_kind;
+        std::vector<double> vm_ckfdiag_unf_chi2, vm_ckfdiag_unf_pull0, vm_ckfdiag_unf_pull1;
+        std::vector<double> vm_ckfdiag_unf_innov0, vm_ckfdiag_unf_innov1;
+        // Schema 6: prediction-vs-truth and outlier ownership, parallel to
+        // the schema-5 rows (calibrated states only; holes keep NaNs).
+        std::vector<double> vm_ckfdiag_unf_pred0, vm_ckfdiag_unf_pred1;
+        std::vector<double> vm_ckfdiag_unf_meas0, vm_ckfdiag_unf_meas1;
+        std::vector<double> vm_ckfdiag_unf_dpred_t0, vm_ckfdiag_unf_dpred_t1;
+        std::vector<double> vm_ckfdiag_unf_dmeas_t0, vm_ckfdiag_unf_dmeas_t1;
+        std::vector<double> vm_ckfdiag_unf_tdist_prim, vm_ckfdiag_unf_tdist_other;
+        std::vector<int> vm_ckfdiag_unf_nprim_st, vm_ckfdiag_unf_noth_st;
 
         TrackChain m_ts;
         TrackChain m_ckf;
@@ -443,6 +460,16 @@ private:
     std::vector<int>    vm_ckfdiag_best_station_mask;
     std::vector<std::vector<int>> vm_ckfdiag_cand_per_station;
     int m_ckfdiagMaxStation = -1;
+    std::vector<int> vm_ckfdiag_unf_seedpos, vm_ckfdiag_unf_status;
+    std::vector<int> vm_ckfdiag_unf_station, vm_ckfdiag_unf_kind;
+    std::vector<double> vm_ckfdiag_unf_chi2, vm_ckfdiag_unf_pull0, vm_ckfdiag_unf_pull1;
+    std::vector<double> vm_ckfdiag_unf_innov0, vm_ckfdiag_unf_innov1;
+    std::vector<double> vm_ckfdiag_unf_pred0, vm_ckfdiag_unf_pred1;
+    std::vector<double> vm_ckfdiag_unf_meas0, vm_ckfdiag_unf_meas1;
+    std::vector<double> vm_ckfdiag_unf_dpred_t0, vm_ckfdiag_unf_dpred_t1;
+    std::vector<double> vm_ckfdiag_unf_dmeas_t0, vm_ckfdiag_unf_dmeas_t1;
+    std::vector<double> vm_ckfdiag_unf_tdist_prim, vm_ckfdiag_unf_tdist_other;
+    std::vector<int> vm_ckfdiag_unf_nprim_st, vm_ckfdiag_unf_noth_st;
 
     TrackChain m_ts;
     TrackChain m_ckf;

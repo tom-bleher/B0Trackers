@@ -90,7 +90,7 @@ int main() {
     }
     CHECK(closeTo(wrapPi(0.1), 0.1));
 
-    CHECK(kSchemaVersion == 4);
+    CHECK(kSchemaVersion == 6);
 
     // ckfdiag wire codes mirror eicrecon::b0counters::ckfdiag; the checks below
     // pin the values so a one-sided edit breaks loudly here instead of
@@ -132,6 +132,54 @@ int main() {
     CHECK(preferredEstimateKind(false, false, false) == kEstimateNone);
     CHECK(closeTo(nativeTimeToNs(299.792458, 299.792458), 1.0));
     CHECK(std::isnan(nativeTimeToNs(1.0, 0.0)));
+
+    // Innovation compatibility: 2-dof identity.
+    {
+        const auto ic = innovCompat(2, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0);
+        CHECK(closeTo(ic.pull0, 1.0));
+        CHECK(closeTo(ic.pull1, 0.0));
+        CHECK(closeTo(ic.chi2, 1.0));
+    }
+    // 2-dof with correlation: S = [[2,1],[1,2]], r = (1,1) -> chi2 = 2/3.
+    {
+        const auto ic = innovCompat(2, 1.0, 1.0, 2.0, 1.0, 2.0, 0.0, 0.0, 0.0);
+        CHECK(closeTo(ic.pull0, 1.0 / std::sqrt(2.0)));
+        CHECK(closeTo(ic.pull1, 1.0 / std::sqrt(2.0)));
+        CHECK(closeTo(ic.chi2, 2.0 / 3.0));
+    }
+    // 1-dof: r0 = 2, s = 4 -> pull 1, chi2 1.
+    {
+        const auto ic = innovCompat(1, 2.0, 0.0, 3.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+        CHECK(closeTo(ic.pull0, 1.0));
+        CHECK(std::isnan(ic.pull1));
+        CHECK(closeTo(ic.chi2, 1.0));
+    }
+    // Singular S: pulls from the diagonal, chi2 NaN.
+    {
+        const auto ic = innovCompat(2, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0);
+        CHECK(closeTo(ic.pull0, 1.0));
+        CHECK(closeTo(ic.pull1, 1.0));
+        CHECK(std::isnan(ic.chi2));
+    }
+    // Non-positive / non-finite S: all NaN.
+    {
+        const auto ic = innovCompat(2, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0);
+        CHECK(std::isnan(ic.pull0));
+        CHECK(std::isnan(ic.chi2));
+    }
+    {
+        const auto nan = std::numeric_limits<double>::quiet_NaN();
+        const auto ic  = innovCompat(1, 1.0, 0.0, nan, 0.0, 0.0, 1.0, 0.0, 0.0);
+        CHECK(std::isnan(ic.pull0));
+        CHECK(std::isnan(ic.chi2));
+    }
+    // Unsupported dimension: all NaN.
+    {
+        const auto ic = innovCompat(0, 1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0);
+        CHECK(std::isnan(ic.pull0));
+        CHECK(std::isnan(ic.pull1));
+        CHECK(std::isnan(ic.chi2));
+    }
 
     // The test harness itself must be able to fail; a check that never trips is
     // indistinguishable from one that was compiled away.

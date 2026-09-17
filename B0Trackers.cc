@@ -176,6 +176,49 @@ int trackStateTypeMask(const FlagsT& flags) {
 #endif
 }
 
+// Innovation residual and compatibility for one CKF track state: r0/r1 are
+// m - H x_pred in the calibrated subspace, the return value carries the
+// normalized pulls and chi2 (see b0trk::innovCompat). States without a
+// prediction or without a calibrated measurement yield NaNs. Shared by the
+// filtered-chain dump and the unfiltered candidate dump so both see the
+// same definition the CKF measurement selector used.
+template <typename TrackStateProxy>
+b0trk::InnovCompat stateInnovCompat(const TrackStateProxy& state, double& r0, double& r1) {
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    r0 = nan;
+    r1 = nan;
+    if (!state.hasPredicted() || !state.hasCalibrated()) {
+        return {};
+    }
+    try {
+        const auto pred      = state.predicted();
+        const auto predCov   = state.predictedCovariance();
+        const auto meas      = state.effectiveCalibrated();
+        const auto measCov   = state.effectiveCalibratedCovariance();
+        const auto projector = state.projectorSubspaceIndices();
+        const int measDim    = static_cast<int>(state.calibratedSize());
+        double v00 = nan, v01 = nan, v11 = nan;
+        double c00 = nan, c01 = nan, c11 = nan;
+        if (measDim > 0) {
+            r0  = meas[0] - pred[projector[0]];
+            v00 = measCov(0, 0);
+            c00 = predCov(projector[0], projector[0]);
+        }
+        if (measDim > 1) {
+            r1  = meas[1] - pred[projector[1]];
+            v01 = measCov(0, 1);
+            v11 = measCov(1, 1);
+            c01 = predCov(projector[0], projector[1]);
+            c11 = predCov(projector[1], projector[1]);
+        }
+        return b0trk::innovCompat(measDim, r0, r1, v00, v01, v11, c00, c01, c11);
+    } catch (...) {
+        r0 = nan;
+        r1 = nan;
+        return {};
+    }
+}
+
 bool decoderHasField(const dd4hep::DDSegmentation::BitFieldCoder* decoder, const char* field) {
     if (decoder == nullptr) {
         return false;
@@ -564,6 +607,27 @@ void B0Trackers::Init() {
     m_tree->Branch("ckfdiag_best_station_mask", &vm_ckfdiag_best_station_mask);
     m_tree->Branch("ckfdiag_cand_per_station", &vm_ckfdiag_cand_per_station);
     m_tree->Branch("ckfdiag_max_station", &m_ckfdiagMaxStation);
+    m_tree->Branch("ckfdiag_unf_seedpos", &vm_ckfdiag_unf_seedpos);
+    m_tree->Branch("ckfdiag_unf_status", &vm_ckfdiag_unf_status);
+    m_tree->Branch("ckfdiag_unf_station", &vm_ckfdiag_unf_station);
+    m_tree->Branch("ckfdiag_unf_kind", &vm_ckfdiag_unf_kind);
+    m_tree->Branch("ckfdiag_unf_chi2", &vm_ckfdiag_unf_chi2);
+    m_tree->Branch("ckfdiag_unf_pull0", &vm_ckfdiag_unf_pull0);
+    m_tree->Branch("ckfdiag_unf_pull1", &vm_ckfdiag_unf_pull1);
+    m_tree->Branch("ckfdiag_unf_innov0", &vm_ckfdiag_unf_innov0);
+    m_tree->Branch("ckfdiag_unf_innov1", &vm_ckfdiag_unf_innov1);
+    m_tree->Branch("ckfdiag_unf_pred0", &vm_ckfdiag_unf_pred0);
+    m_tree->Branch("ckfdiag_unf_pred1", &vm_ckfdiag_unf_pred1);
+    m_tree->Branch("ckfdiag_unf_meas0", &vm_ckfdiag_unf_meas0);
+    m_tree->Branch("ckfdiag_unf_meas1", &vm_ckfdiag_unf_meas1);
+    m_tree->Branch("ckfdiag_unf_dpred_t0", &vm_ckfdiag_unf_dpred_t0);
+    m_tree->Branch("ckfdiag_unf_dpred_t1", &vm_ckfdiag_unf_dpred_t1);
+    m_tree->Branch("ckfdiag_unf_dmeas_t0", &vm_ckfdiag_unf_dmeas_t0);
+    m_tree->Branch("ckfdiag_unf_dmeas_t1", &vm_ckfdiag_unf_dmeas_t1);
+    m_tree->Branch("ckfdiag_unf_tdist_prim", &vm_ckfdiag_unf_tdist_prim);
+    m_tree->Branch("ckfdiag_unf_tdist_other", &vm_ckfdiag_unf_tdist_other);
+    m_tree->Branch("ckfdiag_unf_nprim_st", &vm_ckfdiag_unf_nprim_st);
+    m_tree->Branch("ckfdiag_unf_noth_st", &vm_ckfdiag_unf_noth_st);
 
     m_tree->Branch("n_simhits", &m_nSimHits);
     m_tree->Branch("n_rawhits", &m_nRawHits);
@@ -1021,6 +1085,17 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     local.vm_ckfdiag_best_station_mask.clear();
     local.vm_ckfdiag_cand_per_station.clear();
     local.m_ckfdiagMaxStation = -1;
+    local.vm_ckfdiag_unf_seedpos.clear(); local.vm_ckfdiag_unf_status.clear();
+    local.vm_ckfdiag_unf_station.clear(); local.vm_ckfdiag_unf_kind.clear();
+    local.vm_ckfdiag_unf_chi2.clear(); local.vm_ckfdiag_unf_pull0.clear();
+    local.vm_ckfdiag_unf_pull1.clear(); local.vm_ckfdiag_unf_innov0.clear();
+    local.vm_ckfdiag_unf_innov1.clear();
+    local.vm_ckfdiag_unf_pred0.clear(); local.vm_ckfdiag_unf_pred1.clear();
+    local.vm_ckfdiag_unf_meas0.clear(); local.vm_ckfdiag_unf_meas1.clear();
+    local.vm_ckfdiag_unf_dpred_t0.clear(); local.vm_ckfdiag_unf_dpred_t1.clear();
+    local.vm_ckfdiag_unf_dmeas_t0.clear(); local.vm_ckfdiag_unf_dmeas_t1.clear();
+    local.vm_ckfdiag_unf_tdist_prim.clear(); local.vm_ckfdiag_unf_tdist_other.clear();
+    local.vm_ckfdiag_unf_nprim_st.clear(); local.vm_ckfdiag_unf_noth_st.clear();
 
     const double nan = b0trk::quietNaN();
     local.m_ts.clear(nan);
@@ -1846,6 +1921,30 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         int firstHoleStation = -1;
     };
     std::unordered_map<std::size_t, std::vector<CkfDiagCand>> ckfCandsBySeed;
+    // Truth SimHits per station (mm) for the schema-6 prediction-vs-truth
+    // and outlier-ownership diagnosis.
+    struct B0TruthHit {
+        int station = -1;
+        double x = 0.0, y = 0.0, z = 0.0;
+        bool selPrimary = false;
+    };
+    std::vector<B0TruthHit> b0TruthHits;
+    for (std::size_t ih = 0; ih < local.vm_xT.size(); ++ih) {
+        if (ih >= local.vm_station.size() || ih >= local.vm_isSelPrimary.size() ||
+            ih >= local.vm_yT.size() || ih >= local.vm_zT.size()) {
+            break;
+        }
+        const int st = local.vm_station[ih];
+        if (st < 0 || !std::isfinite(local.vm_xT[ih])) {
+            continue;
+        }
+        b0TruthHits.push_back({st, local.vm_xT[ih], local.vm_yT[ih], local.vm_zT[ih],
+                               local.vm_isSelPrimary[ih] == 1});
+    }
+    auto unfGeoProvider = m_actsGeoProvider ? m_actsGeoProvider
+                                            : (m_actsGeoSvc ? m_actsGeoSvc->actsGeoProvider() : nullptr);
+    const auto* unfGeoCtx =
+        unfGeoProvider ? &unfGeoProvider->getActsGeometryContext() : nullptr;
     const bool haveCkfActsUnfilt =
         hasCkfActsStatesUnfiltered && hasCkfActsTracksUnfiltered &&
         !ckfActsTrackStatesUnfilt.empty() && ckfActsTrackStatesUnfilt.front() != nullptr &&
@@ -1919,6 +2018,115 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 if (station < 0) {
                     continue;
                 }
+                // Per-state compatibility for the measurement-selection
+                // diagnosis: one row per physics state on a mapped B0
+                // station, for every candidate (accepted and rejected).
+                // kind: 0 = accepted measurement, 1 = outlier, 2 = hole
+                // (holes carry no calibrated measurement, so their
+                // compatibility fields stay NaN).
+                const int stateKind = isOutlier ? 1 : (isMeas ? 0 : 2);
+                double innov0 = nan, innov1 = nan;
+                b0trk::InnovCompat stateCompat;
+                if (isOutlier || isMeas) {
+                    stateCompat = stateInnovCompat(state, innov0, innov1);
+                }
+                local.vm_ckfdiag_unf_seedpos.push_back(static_cast<int>(seedPos));
+                local.vm_ckfdiag_unf_status.push_back(static_cast<int>(cand.status));
+                local.vm_ckfdiag_unf_station.push_back(station);
+                local.vm_ckfdiag_unf_kind.push_back(stateKind);
+                local.vm_ckfdiag_unf_chi2.push_back(stateCompat.chi2);
+                local.vm_ckfdiag_unf_pull0.push_back(stateCompat.pull0);
+                local.vm_ckfdiag_unf_pull1.push_back(stateCompat.pull1);
+                local.vm_ckfdiag_unf_innov0.push_back(innov0);
+                local.vm_ckfdiag_unf_innov1.push_back(innov1);
+                // Schema 6: prediction-vs-truth, measurement-vs-truth, and
+                // outlier ownership. Truth SimHits at the same station are
+                // projected into the state's surface; the selected-primary
+                // hit nearest the measurement anchors the residuals, and the
+                // nearest other-particle hit classifies ownership.
+                // Calibrated states only; holes keep NaNs and zero counts.
+                double pred0 = nan, pred1 = nan, meas0 = nan, meas1 = nan;
+                double dpredT0 = nan, dpredT1 = nan, dmeasT0 = nan, dmeasT1 = nan;
+                double tdistPrim = nan, tdistOther = nan;
+                int nPrimSt = 0, nOthSt = 0;
+                if ((isOutlier || isMeas) && unfGeoCtx != nullptr && state.hasPredicted()) {
+                    try {
+                        const auto pred = state.predicted();
+                        pred0 = pred[Acts::eBoundLoc0];
+                        pred1 = pred[Acts::eBoundLoc1];
+                        const Acts::Vector3 predDir(
+                            std::sin(pred[Acts::eBoundTheta]) * std::cos(pred[Acts::eBoundPhi]),
+                            std::sin(pred[Acts::eBoundTheta]) * std::sin(pred[Acts::eBoundPhi]),
+                            std::cos(pred[Acts::eBoundTheta]));
+                        int md = 0;
+                        if (state.hasCalibrated()) {
+                            const auto meas = state.effectiveCalibrated();
+                            md = static_cast<int>(state.calibratedSize());
+                            if (md > 0) {
+                                meas0 = meas[0];
+                            }
+                            if (md > 1) {
+                                meas1 = meas[1];
+                            }
+                        }
+                        const auto& surface = state.referenceSurface();
+                        double bestPrim = std::numeric_limits<double>::infinity();
+                        double bestOth  = std::numeric_limits<double>::infinity();
+                        for (const auto& thit : b0TruthHits) {
+                            if (thit.station != station) {
+                                continue;
+                            }
+                            if (thit.selPrimary) {
+                                ++nPrimSt;
+                            } else {
+                                ++nOthSt;
+                            }
+                            const Acts::Vector3 tpos(thit.x, thit.y, thit.z);
+                            const auto locResult = surface.globalToLocal(*unfGeoCtx, tpos, predDir, 1.0);
+                            if (!locResult.ok()) {
+                                continue;
+                            }
+                            const double t0 = (*locResult)[0];
+                            const double t1 = (*locResult)[1];
+                            double dm = std::numeric_limits<double>::infinity();
+                            if (std::isfinite(meas0)) {
+                                const double d0 = meas0 - t0;
+                                const double d1 = (md > 1 && std::isfinite(meas1)) ? meas1 - t1 : 0.0;
+                                dm = std::sqrt(d0 * d0 + d1 * d1);
+                            }
+                            if (thit.selPrimary) {
+                                if (dm < bestPrim) {
+                                    bestPrim  = dm;
+                                    dpredT0   = pred0 - t0;
+                                    dpredT1   = pred1 - t1;
+                                    dmeasT0   = std::isfinite(meas0) ? meas0 - t0 : nan;
+                                    dmeasT1   = (md > 1 && std::isfinite(meas1)) ? meas1 - t1 : nan;
+                                }
+                            } else if (dm < bestOth) {
+                                bestOth = dm;
+                            }
+                        }
+                        if (std::isfinite(bestPrim)) {
+                            tdistPrim = bestPrim;
+                        }
+                        if (std::isfinite(bestOth)) {
+                            tdistOther = bestOth;
+                        }
+                    } catch (...) {
+                    }
+                }
+                local.vm_ckfdiag_unf_pred0.push_back(pred0);
+                local.vm_ckfdiag_unf_pred1.push_back(pred1);
+                local.vm_ckfdiag_unf_meas0.push_back(meas0);
+                local.vm_ckfdiag_unf_meas1.push_back(meas1);
+                local.vm_ckfdiag_unf_dpred_t0.push_back(dpredT0);
+                local.vm_ckfdiag_unf_dpred_t1.push_back(dpredT1);
+                local.vm_ckfdiag_unf_dmeas_t0.push_back(dmeasT0);
+                local.vm_ckfdiag_unf_dmeas_t1.push_back(dmeasT1);
+                local.vm_ckfdiag_unf_tdist_prim.push_back(tdistPrim);
+                local.vm_ckfdiag_unf_tdist_other.push_back(tdistOther);
+                local.vm_ckfdiag_unf_nprim_st.push_back(nPrimSt);
+                local.vm_ckfdiag_unf_noth_st.push_back(nOthSt);
                 if (isOutlier) {
                     // Reached but incompatible: counts toward where CKF got,
                     // never toward measurement stations.
@@ -2526,26 +2734,20 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                                 measCov11 = measCov(1, 1);
                                 innov1 = meas[1] - pred[projector[1]];
                             }
-                            if (measDim == 1) {
-                                const double s00 = measCov(0, 0) + predCov(projector[0], projector[0]);
-                                if (s00 > 0.0 && std::isfinite(s00)) {
-                                    innovPull0 = innov0 / std::sqrt(s00);
-                                    innovChi2 = innov0 * innov0 / s00;
-                                }
-                            } else if (measDim == 2) {
-                                Eigen::Matrix2d S;
-                                S(0, 0) = measCov(0, 0) + predCov(projector[0], projector[0]);
-                                S(0, 1) = measCov(0, 1) + predCov(projector[0], projector[1]);
-                                S(1, 0) = measCov(1, 0) + predCov(projector[1], projector[0]);
-                                S(1, 1) = measCov(1, 1) + predCov(projector[1], projector[1]);
-                                if (S.allFinite() && S(0, 0) > 0.0 && S(1, 1) > 0.0) {
-                                    innovPull0 = innov0 / std::sqrt(S(0, 0));
-                                    innovPull1 = innov1 / std::sqrt(S(1, 1));
-                                    const Eigen::Vector2d r(innov0, innov1);
-                                    const auto ldlt = S.ldlt();
-                                    if (ldlt.info() == Eigen::Success) innovChi2 = r.dot(ldlt.solve(r));
-                                }
+                            double predC00 = nan, predC01 = nan, predC11 = nan;
+                            if (measDim > 0) {
+                                predC00 = predCov(projector[0], projector[0]);
                             }
+                            if (measDim > 1) {
+                                predC01 = predCov(projector[0], projector[1]);
+                                predC11 = predCov(projector[1], projector[1]);
+                            }
+                            const auto compat =
+                                b0trk::innovCompat(measDim, innov0, innov1, measCov00, measCov01,
+                                                   measCov11, predC00, predC01, predC11);
+                            innovPull0 = compat.pull0;
+                            innovPull1 = compat.pull1;
+                            innovChi2  = compat.chi2;
                         } catch (...) {}
                     }
                 }
@@ -2993,6 +3195,27 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         swap(this->vm_ckfdiag_best_station_mask, local.vm_ckfdiag_best_station_mask);
         swap(this->vm_ckfdiag_cand_per_station, local.vm_ckfdiag_cand_per_station);
         swap(this->m_ckfdiagMaxStation, local.m_ckfdiagMaxStation);
+        swap(this->vm_ckfdiag_unf_seedpos, local.vm_ckfdiag_unf_seedpos);
+        swap(this->vm_ckfdiag_unf_status, local.vm_ckfdiag_unf_status);
+        swap(this->vm_ckfdiag_unf_station, local.vm_ckfdiag_unf_station);
+        swap(this->vm_ckfdiag_unf_kind, local.vm_ckfdiag_unf_kind);
+        swap(this->vm_ckfdiag_unf_chi2, local.vm_ckfdiag_unf_chi2);
+        swap(this->vm_ckfdiag_unf_pull0, local.vm_ckfdiag_unf_pull0);
+        swap(this->vm_ckfdiag_unf_pull1, local.vm_ckfdiag_unf_pull1);
+        swap(this->vm_ckfdiag_unf_innov0, local.vm_ckfdiag_unf_innov0);
+        swap(this->vm_ckfdiag_unf_innov1, local.vm_ckfdiag_unf_innov1);
+        swap(this->vm_ckfdiag_unf_pred0, local.vm_ckfdiag_unf_pred0);
+        swap(this->vm_ckfdiag_unf_pred1, local.vm_ckfdiag_unf_pred1);
+        swap(this->vm_ckfdiag_unf_meas0, local.vm_ckfdiag_unf_meas0);
+        swap(this->vm_ckfdiag_unf_meas1, local.vm_ckfdiag_unf_meas1);
+        swap(this->vm_ckfdiag_unf_dpred_t0, local.vm_ckfdiag_unf_dpred_t0);
+        swap(this->vm_ckfdiag_unf_dpred_t1, local.vm_ckfdiag_unf_dpred_t1);
+        swap(this->vm_ckfdiag_unf_dmeas_t0, local.vm_ckfdiag_unf_dmeas_t0);
+        swap(this->vm_ckfdiag_unf_dmeas_t1, local.vm_ckfdiag_unf_dmeas_t1);
+        swap(this->vm_ckfdiag_unf_tdist_prim, local.vm_ckfdiag_unf_tdist_prim);
+        swap(this->vm_ckfdiag_unf_tdist_other, local.vm_ckfdiag_unf_tdist_other);
+        swap(this->vm_ckfdiag_unf_nprim_st, local.vm_ckfdiag_unf_nprim_st);
+        swap(this->vm_ckfdiag_unf_noth_st, local.vm_ckfdiag_unf_noth_st);
         swap(this->m_hasCkfActsStatesUnfiltered, local.m_hasCkfActsStatesUnfiltered);
         swap(this->m_hasCkfActsTracksUnfiltered, local.m_hasCkfActsTracksUnfiltered);
         m_tree->Fill();
