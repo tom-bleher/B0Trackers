@@ -59,7 +59,7 @@
 #include <services/geometry/acts/ACTSGeo_service.h>
 #include <services/log/Log_service.h>
 
-// B0Trackers/hits branch map (schema 3):
+// B0Trackers/hits branch map (schema 4):
 //   trk_*                  = B0TrackerCKFTruthSeeded* (filtered), IP-perigee
 //   ckf_trk_*              = B0TrackerCKF* (filtered), IP-perigee
 //   *_oracle_best_*        = min |p_reco-p_sel| (cheat; also aliased as best_trk_*)
@@ -69,6 +69,21 @@
 //   matchesPrimarySelector = every MC matching primary_pdg/status (alias: isPrimary)
 //   isSelPrimary           = selected highest-p primary only
 //   rec_* / raw_*          = B0TrackerRecHits / B0TrackerRawHits
+//   ckfdiag_*              = per-stub-seed CKF failure diagnostics (schema 4),
+//                            parallel to stub-seed input order; join on
+//                            ckfdiag_seed_index (PODIO ObjectID). Candidate and
+//                            marker rows come from the UNFILTERED ACTS
+//                            containers (requires write_track_states=1);
+//                            stage: -1 unknown, 0 accepted, 1 all CKF-rejected,
+//                            2 findTracks failed, 3 findTracks empty.
+//                            find_err_class: 0 none, 1 CKF actor, 2 propagation/
+//                            navigation. best_* describe the best non-marker
+//                            candidate (accepted > nMeas > fewer holes).
+//                            cand_per_station[seed][station] counts candidates
+//                            with a measurement at that station (station = the
+//                            `station` branch numbering; inner size =
+//                            ckfdiag_max_station+1). truth_p/theta/phi are the
+//                            associated MC particle kinematics (NaN if none).
 //   firstHit/lastHit       = aliases of Entry/Exit (min/max-time SimHits)
 //   Output tree is in -Phistsfile (default eicrecon.root), directory B0Trackers.
 
@@ -517,6 +532,27 @@ void B0Trackers::Init() {
     m_tree->Branch("truth_seed_n_unfiltered_tracks", &vm_truth_seed_n_unfiltered_tracks);
     m_tree->Branch("truth_seed_n_filtered_tracks", &vm_truth_seed_n_filtered_tracks);
 
+    m_tree->Branch("ckfdiag_seed_index", &vm_ckfdiag_seed_index);
+    m_tree->Branch("ckfdiag_seed_n_stations", &vm_ckfdiag_seed_n_stations);
+    m_tree->Branch("ckfdiag_truth_p", &vm_ckfdiag_truth_p);
+    m_tree->Branch("ckfdiag_truth_theta", &vm_ckfdiag_truth_theta);
+    m_tree->Branch("ckfdiag_truth_phi", &vm_ckfdiag_truth_phi);
+    m_tree->Branch("ckfdiag_n_candidates", &vm_ckfdiag_n_candidates);
+    m_tree->Branch("ckfdiag_n_accepted", &vm_ckfdiag_n_accepted);
+    m_tree->Branch("ckfdiag_stage", &vm_ckfdiag_stage);
+    m_tree->Branch("ckfdiag_find_err_class", &vm_ckfdiag_find_err_class);
+    m_tree->Branch("ckfdiag_find_err_value", &vm_ckfdiag_find_err_value);
+    m_tree->Branch("ckfdiag_best_status", &vm_ckfdiag_best_status);
+    m_tree->Branch("ckfdiag_best_n_states", &vm_ckfdiag_best_n_states);
+    m_tree->Branch("ckfdiag_best_n_meas", &vm_ckfdiag_best_n_meas);
+    m_tree->Branch("ckfdiag_best_n_holes", &vm_ckfdiag_best_n_holes);
+    m_tree->Branch("ckfdiag_best_n_outliers", &vm_ckfdiag_best_n_outliers);
+    m_tree->Branch("ckfdiag_best_last_station", &vm_ckfdiag_best_last_station);
+    m_tree->Branch("ckfdiag_best_first_hole_station", &vm_ckfdiag_best_first_hole_station);
+    m_tree->Branch("ckfdiag_best_station_mask", &vm_ckfdiag_best_station_mask);
+    m_tree->Branch("ckfdiag_cand_per_station", &vm_ckfdiag_cand_per_station);
+    m_tree->Branch("ckfdiag_max_station", &m_ckfdiagMaxStation);
+
     m_tree->Branch("n_simhits", &m_nSimHits);
     m_tree->Branch("n_rawhits", &m_nRawHits);
     m_tree->Branch("n_rechits", &m_nRecHits);
@@ -556,6 +592,8 @@ void B0Trackers::Init() {
     m_tree->Branch("has_ckf_acts_tracks", &m_hasCkfActsTracks);
     m_tree->Branch("has_ckf_tracks_unfiltered", &m_hasCkfTracksUnfiltered);
     m_tree->Branch("has_ckf_assocs_unfiltered", &m_hasCkfAssocsUnfiltered);
+    m_tree->Branch("has_ckf_acts_states_unfiltered", &m_hasCkfActsStatesUnfiltered);
+    m_tree->Branch("has_ckf_acts_tracks_unfiltered", &m_hasCkfActsTracksUnfiltered);
 
     m_geoSvc = app->GetService<DD4hep_service>();
     m_actsGeoSvc = app->GetService<ACTSGeo_service>();
@@ -778,6 +816,21 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         }
     }
 
+    // Unfiltered ACTS containers carry the per-seed CKF diagnostic rows
+    // (accepted + rejected candidates, find-failure markers) written by
+    // CKFTracking for B0 chains. Absent for older reco or when
+    // write_track_states is off; per-seed stages are then unknown (-1).
+    std::vector<const Acts::ConstVectorMultiTrajectory*> ckfActsTrackStatesUnfilt;
+    std::vector<const Acts::ConstVectorTrackContainer*> ckfActsTracksUnfilt;
+    bool hasCkfActsStatesUnfiltered = false;
+    bool hasCkfActsTracksUnfiltered = false;
+    if (m_enableStubSeededChain && m_writeTrackStates) {
+        hasCkfActsStatesUnfiltered =
+            getOpt(event, "B0TrackerCKFActsTrackStatesUnfiltered", ckfActsTrackStatesUnfilt);
+        hasCkfActsTracksUnfiltered =
+            getOpt(event, "B0TrackerCKFActsTracksUnfiltered", ckfActsTracksUnfilt);
+    }
+
     // Reusable payload owned by this JANA worker thread. All event analysis
     // happens here; only branch-buffer swapping and TTree::Fill() are serialized.
     thread_local EventBuffers local;
@@ -802,6 +855,8 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     local.m_hasCkfActsTracks           = hasCkfActsTracks;
     local.m_hasCkfTracksUnfiltered     = hasCkfTracksUnfiltered;
     local.m_hasCkfAssocsUnfiltered     = hasCkfAssocsUnfiltered;
+    local.m_hasCkfActsStatesUnfiltered = hasCkfActsStatesUnfiltered;
+    local.m_hasCkfActsTracksUnfiltered = hasCkfActsTracksUnfiltered;
 
     local.m_eventNumber = event->GetEventNumber();
 
@@ -872,6 +927,18 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     local.vm_truth_seed_momentum_resolved.clear(); local.vm_truth_seed_became_track.clear();
     local.vm_truth_seed_made_unfiltered_track.clear(); local.vm_truth_seed_survived_ambiguity.clear();
     local.vm_truth_seed_n_unfiltered_tracks.clear(); local.vm_truth_seed_n_filtered_tracks.clear();
+
+    local.vm_ckfdiag_seed_index.clear(); local.vm_ckfdiag_seed_n_stations.clear();
+    local.vm_ckfdiag_truth_p.clear(); local.vm_ckfdiag_truth_theta.clear(); local.vm_ckfdiag_truth_phi.clear();
+    local.vm_ckfdiag_n_candidates.clear(); local.vm_ckfdiag_n_accepted.clear(); local.vm_ckfdiag_stage.clear();
+    local.vm_ckfdiag_find_err_class.clear(); local.vm_ckfdiag_find_err_value.clear();
+    local.vm_ckfdiag_best_status.clear();
+    local.vm_ckfdiag_best_n_states.clear(); local.vm_ckfdiag_best_n_meas.clear();
+    local.vm_ckfdiag_best_n_holes.clear(); local.vm_ckfdiag_best_n_outliers.clear();
+    local.vm_ckfdiag_best_last_station.clear(); local.vm_ckfdiag_best_first_hole_station.clear();
+    local.vm_ckfdiag_best_station_mask.clear();
+    local.vm_ckfdiag_cand_per_station.clear();
+    local.m_ckfdiagMaxStation = -1;
 
     const double nan = b0trk::quietNaN();
     local.m_ts.clear(nan);
@@ -1081,6 +1148,22 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     }
     const auto dominantFraction = [nan](const SimLink& link) {
         return link.totalEDep > 0.0 ? link.eDep / link.totalEDep : nan;
+    };
+
+    // MC lookup by stable PODIO identity for per-seed truth kinematics.
+    std::unordered_map<std::uint64_t, const edm4hep::MCParticle*> mcByObjectId;
+    for (const auto* part : mcparticles) {
+        if (part == nullptr) continue;
+        const auto id = part->id();
+        mcByObjectId[(static_cast<std::uint64_t>(id.collectionID) << 32) |
+                     static_cast<std::uint32_t>(id.index)] = part;
+    }
+    const auto findMc = [&mcByObjectId](std::uint32_t collectionID,
+                                        int index) -> const edm4hep::MCParticle* {
+        if (index < 0) return nullptr;
+        const auto it = mcByObjectId.find((static_cast<std::uint64_t>(collectionID) << 32) |
+                                          static_cast<std::uint32_t>(index));
+        return it == mcByObjectId.end() ? nullptr : it->second;
     };
 
     std::vector<std::pair<std::uint32_t, int>> primaryIds;
@@ -1601,7 +1684,10 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
 
     // Attribute each stub seed to MC truth from its constituent TrackerHits.
     // Each hit/cell contributes one unit distributed among the cell's MC energy fractions,
-    // matching the per-measurement convention used by ActsToTracks.
+    // matching the per-measurement convention used by ActsToTracks. The best
+    // identity per seed is retained for the ckfdiag truth kinematics below.
+    std::vector<std::pair<std::uint32_t, int>> stubSeedBestMc;
+    stubSeedBestMc.reserve(stubSeeds.size());
     for (const auto* seed : stubSeeds) {
         std::map<std::pair<std::uint32_t, int>, double> weights;
         if (seed != nullptr) {
@@ -1632,10 +1718,281 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         local.vm_seed_assoc_mcIndex.push_back(bestIndex);
         local.vm_seed_assoc_mcCollectionID.push_back(bestCollection);
         local.vm_seed_assoc_weight.push_back(normalized);
+        stubSeedBestMc.emplace_back(bestCollection, bestIndex);
         if (bestIndex == local.m_selPrimaryMcIndex && bestCollection == local.m_selPrimaryMcCollectionID &&
             local.m_selPrimaryMcIndex >= 0) {
             local.m_selPrimaryHasSeed = 1;
         }
+    }
+
+    // Per-seed CKF failure diagnostics (schema 4): one entry per stub seed,
+    // including seeds that produced zero output tracks. Candidate and marker
+    // rows are read from the UNFILTERED ACTS containers written by CKFTracking
+    // for B0 chains and joined positionally via the "seed" column (the CKF
+    // processes seeds in collection order). Without those containers every
+    // finding quantity is -1 (unknown), while seed- and truth-level quantities
+    // below are still filled.
+    //
+    // What each quantity means and where it comes from:
+    // - n_candidates/n_accepted/stage/best_status/find_err_*: CKF rows for
+    //   this seed (status codes: eicrecon::b0counters::ckfdiag).
+    // - best_n_states: states on the best candidate; proxy for N surfaces
+    //   visited (material/passive states included, passive surfaces excluded
+    //   by the CKF navigator configuration).
+    // - best_n_meas: accepted measurements on the best candidate (N compatible
+    //   measurements is not observable post-hoc; see below).
+    // - best_n_holes: surfaces reached with no compatible measurement;
+    //   best_first_hole_station approximates the first station with no
+    //   compatible measurement (minimum hole station).
+    // - best_last_station: maximum station over measurement and hole states.
+    // - cand_per_station: per-station candidate counts with measurements.
+    // NOT capturable without ACTS actor instrumentation (stated limits): the
+    // number of source links tested per surface (N considered), the
+    // MeasurementSelector chi2 shortlist per surface (N compatible), and the
+    // silent max-branches pruning inside the CKF actor. The outlier count and
+    // rejection reasons are the observable proxies.
+    struct CkfDiagCand {
+        unsigned status = b0trk::ckfdiag::kAccepted;
+        unsigned findErr = 0;
+        bool isMarker = true;
+        int nStates = 0;
+        int nMeas = 0;
+        int nHoles = 0;
+        int nOutliers = 0;
+        std::set<int> measStations;
+        int lastStation = -1;
+        int firstHoleStation = -1;
+    };
+    std::unordered_map<std::size_t, std::vector<CkfDiagCand>> ckfCandsBySeed;
+    const bool haveCkfActsUnfilt =
+        hasCkfActsStatesUnfiltered && hasCkfActsTracksUnfiltered &&
+        !ckfActsTrackStatesUnfilt.empty() && ckfActsTrackStatesUnfilt.front() != nullptr &&
+        !ckfActsTracksUnfilt.empty() && ckfActsTracksUnfilt.front() != nullptr;
+    if (haveCkfActsUnfilt) {
+        Acts::TrackContainer<Acts::ConstVectorTrackContainer,
+                             Acts::ConstVectorMultiTrajectory,
+                             Acts::detail::ConstRefHolder>
+            unfiltContainer(*ckfActsTracksUnfilt.front(), *ckfActsTrackStatesUnfilt.front());
+        Acts::ConstProxyAccessor<unsigned int> unfiltSeed("seed");
+        Acts::ConstProxyAccessor<unsigned int> unfiltStatus("ckf_status");
+        Acts::ConstProxyAccessor<unsigned int> unfiltFindErr("ckf_find_err");
+        const auto nUnfiltTracks = static_cast<int>(unfiltContainer.size());
+        for (int t = 0; t < nUnfiltTracks; ++t) {
+            const auto track = unfiltContainer.getTrack(t);
+            std::size_t seedPos = stubSeeds.size();
+            try {
+                seedPos = static_cast<std::size_t>(unfiltSeed(track));
+            } catch (...) {
+                continue;
+            }
+            if (seedPos >= stubSeeds.size()) {
+                continue;
+            }
+            CkfDiagCand cand;
+            try {
+                cand.status = unfiltStatus(track);
+            } catch (...) {
+                // Pre-diagnostics reco: rows without a status are accepted.
+                cand.status = b0trk::ckfdiag::kAccepted;
+            }
+            try {
+                cand.findErr = unfiltFindErr(track);
+            } catch (...) {
+                cand.findErr = 0;
+            }
+            if (track.nTrackStates() == 0) {
+                cand.isMarker = true;
+                ckfCandsBySeed[seedPos].push_back(cand);
+                continue;
+            }
+            cand.isMarker = false;
+            for (const auto& state : track.trackStatesReversed()) {
+                if (!state.hasReferenceSurface()) {
+                    continue;
+                }
+                ++cand.nStates;
+                const int typeMask = trackStateTypeMask(state.typeFlags());
+                const bool isMeas = (typeMask & kStateMeasurement) != 0;
+                const bool isHole = (typeMask & kStateHole) != 0;
+                const bool isOutlier = (typeMask & kStateOutlier) != 0;
+                if (isMeas) {
+                    ++cand.nMeas;
+                } else if (isHole) {
+                    ++cand.nHoles;
+                } else if (isOutlier) {
+                    ++cand.nOutliers;
+                } else {
+                    continue;
+                }
+                const auto surfIt = m_surfaceToSensorIdx.find(
+                    state.referenceSurface().geometryId().value());
+                if (surfIt == m_surfaceToSensorIdx.end()) {
+                    continue;
+                }
+                const int station = m_sensorRefs[surfIt->second].station;
+                if (station < 0) {
+                    continue;
+                }
+                if (isMeas) {
+                    cand.measStations.insert(station);
+                    cand.lastStation = std::max(cand.lastStation, station);
+                } else if (isHole) {
+                    cand.lastStation = std::max(cand.lastStation, station);
+                    cand.firstHoleStation = (cand.firstHoleStation < 0)
+                        ? station : std::min(cand.firstHoleStation, station);
+                }
+            }
+            ckfCandsBySeed[seedPos].push_back(std::move(cand));
+        }
+    }
+    int ckfdiagEventMaxStation = -1;
+    for (const auto& seedEntry : ckfCandsBySeed) {
+        for (const auto& cand : seedEntry.second) {
+            for (const int station : cand.measStations) {
+                ckfdiagEventMaxStation = std::max(ckfdiagEventMaxStation, station);
+            }
+        }
+    }
+    if (ckfdiagEventMaxStation > 4096) {
+        ckfdiagEventMaxStation = -1;
+    }
+    local.m_ckfdiagMaxStation = ckfdiagEventMaxStation;
+
+    for (std::size_t i = 0; i < stubSeeds.size(); ++i) {
+        const auto* seed = stubSeeds[i];
+        local.vm_ckfdiag_seed_index.push_back(seed != nullptr ? seed->id().index : -1);
+        int nSeedStations = (seed == nullptr) ? -1 : 0;
+        if (seed != nullptr) {
+            std::set<int> seedStations;
+            for (std::size_t ih = 0; ih < seed->hits_size(); ++ih) {
+                const auto hit = seed->getHits(ih);
+                if (!hit.isAvailable()) {
+                    continue;
+                }
+                int plane = -1, module = -1, sensor = -1, side = -1;
+                decodeIds(static_cast<std::uint64_t>(hit.getCellID()), plane, module, sensor,
+                          side);
+                const int station = stationOf(plane);
+                if (station > 0) {
+                    seedStations.insert(station);
+                }
+            }
+            nSeedStations = static_cast<int>(seedStations.size());
+        }
+        local.vm_ckfdiag_seed_n_stations.push_back(nSeedStations);
+        double truthP = nan, truthTheta = nan, truthPhi = nan;
+        if (seed != nullptr && i < stubSeedBestMc.size()) {
+            if (const auto* mc = findMc(stubSeedBestMc[i].first, stubSeedBestMc[i].second);
+                mc != nullptr) {
+                const auto mp = mc->getMomentum();
+                const double pmag = std::sqrt(mp.x * mp.x + mp.y * mp.y + mp.z * mp.z);
+                if (std::isfinite(pmag) && pmag > 0.0) {
+                    truthP = pmag;
+                    truthTheta = std::acos(std::clamp(mp.z / pmag, -1.0, 1.0));
+                    truthPhi = std::atan2(mp.y, mp.x);
+                }
+            }
+        }
+        local.vm_ckfdiag_truth_p.push_back(truthP);
+        local.vm_ckfdiag_truth_theta.push_back(truthTheta);
+        local.vm_ckfdiag_truth_phi.push_back(truthPhi);
+
+        int nCand = -1, nAcc = -1, stage = b0trk::ckfdiag::kStageUnknown;
+        int errClass = -1, errValue = -1, bestStatus = -1;
+        int bestStates = -1, bestMeas = -1, bestHoles = -1, bestOut = -1;
+        int bestLast = -1, bestFirstHole = -1, bestMask = 0;
+        std::vector<int> perStation;
+        if (haveCkfActsUnfilt) {
+            nCand = 0;
+            nAcc = 0;
+            errClass = 0;
+            errValue = 0;
+            int markerStage = -1;
+            unsigned markerErr = 0;
+            bool haveBest = false;
+            bool bestAcc = false;
+            int bestMeasV = -1, bestHolesV = 0;
+            unsigned bestStatusV = 0;
+            std::vector<std::set<int>> candStationSets;
+            const auto found = ckfCandsBySeed.find(i);
+            if (found != ckfCandsBySeed.end()) {
+                for (const auto& cand : found->second) {
+                    if (cand.isMarker) {
+                        if (cand.status == b0trk::ckfdiag::kFindFailed) {
+                            markerStage = b0trk::ckfdiag::kStageFindFailed;
+                            markerErr = cand.findErr;
+                        } else if (cand.status == b0trk::ckfdiag::kNoCandidates &&
+                                   markerStage < 0) {
+                            markerStage = b0trk::ckfdiag::kStageFindEmpty;
+                            markerErr = cand.findErr;
+                        }
+                        continue;
+                    }
+                    ++nCand;
+                    const bool acc = cand.status == b0trk::ckfdiag::kAccepted;
+                    if (acc) {
+                        ++nAcc;
+                    }
+                    candStationSets.push_back(cand.measStations);
+                    if (b0trk::ckfdiag::isBetterCandidate(acc, cand.nMeas, cand.nHoles,
+                                                         cand.status, bestAcc, bestMeasV,
+                                                         bestHolesV, bestStatusV, haveBest)) {
+                        haveBest = true;
+                        bestAcc = acc;
+                        bestMeasV = cand.nMeas;
+                        bestHolesV = cand.nHoles;
+                        bestStatusV = cand.status;
+                        bestStatus = static_cast<int>(cand.status);
+                        bestStates = cand.nStates;
+                        bestMeas = cand.nMeas;
+                        bestHoles = cand.nHoles;
+                        bestOut = cand.nOutliers;
+                        bestLast = cand.lastStation;
+                        bestFirstHole = cand.firstHoleStation;
+                        bestMask = 0;
+                        for (const int station : cand.measStations) {
+                            if (station >= 0 && station < 31) {
+                                bestMask |= (1 << station);
+                            }
+                        }
+                    }
+                }
+            }
+            if (nAcc > 0) {
+                stage = b0trk::ckfdiag::kStageAccepted;
+            } else if (markerStage >= 0) {
+                stage = markerStage;
+                errClass = static_cast<int>(b0trk::ckfdiag::findErrorClass(markerErr));
+                errValue = static_cast<int>(b0trk::ckfdiag::findErrorValue(markerErr));
+            } else if (nCand > 0) {
+                stage = b0trk::ckfdiag::kStageAllRejected;
+            }
+            if (ckfdiagEventMaxStation >= 0) {
+                perStation.assign(static_cast<std::size_t>(ckfdiagEventMaxStation) + 1, 0);
+                for (const auto& stations : candStationSets) {
+                    for (const int station : stations) {
+                        if (station >= 0 &&
+                            station <= ckfdiagEventMaxStation) {
+                            ++perStation[static_cast<std::size_t>(station)];
+                        }
+                    }
+                }
+            }
+        }
+        local.vm_ckfdiag_n_candidates.push_back(nCand);
+        local.vm_ckfdiag_n_accepted.push_back(nAcc);
+        local.vm_ckfdiag_stage.push_back(stage);
+        local.vm_ckfdiag_find_err_class.push_back(errClass);
+        local.vm_ckfdiag_find_err_value.push_back(errValue);
+        local.vm_ckfdiag_best_status.push_back(bestStatus);
+        local.vm_ckfdiag_best_n_states.push_back(bestStates);
+        local.vm_ckfdiag_best_n_meas.push_back(bestMeas);
+        local.vm_ckfdiag_best_n_holes.push_back(bestHoles);
+        local.vm_ckfdiag_best_n_outliers.push_back(bestOut);
+        local.vm_ckfdiag_best_last_station.push_back(bestLast);
+        local.vm_ckfdiag_best_first_hole_station.push_back(bestFirstHole);
+        local.vm_ckfdiag_best_station_mask.push_back(bestMask);
+        local.vm_ckfdiag_cand_per_station.push_back(std::move(perStation));
     }
 
     const auto collectionHasSelectedPrimary = [this](const auto& assocs) {
@@ -2505,6 +2862,28 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         swap(this->vm_zP, local.vm_zP);
         swap(this->vm_p, local.vm_p);
         swap(this->m_ts, local.m_ts);
+        swap(this->vm_ckfdiag_seed_index, local.vm_ckfdiag_seed_index);
+        swap(this->vm_ckfdiag_seed_n_stations, local.vm_ckfdiag_seed_n_stations);
+        swap(this->vm_ckfdiag_truth_p, local.vm_ckfdiag_truth_p);
+        swap(this->vm_ckfdiag_truth_theta, local.vm_ckfdiag_truth_theta);
+        swap(this->vm_ckfdiag_truth_phi, local.vm_ckfdiag_truth_phi);
+        swap(this->vm_ckfdiag_n_candidates, local.vm_ckfdiag_n_candidates);
+        swap(this->vm_ckfdiag_n_accepted, local.vm_ckfdiag_n_accepted);
+        swap(this->vm_ckfdiag_stage, local.vm_ckfdiag_stage);
+        swap(this->vm_ckfdiag_find_err_class, local.vm_ckfdiag_find_err_class);
+        swap(this->vm_ckfdiag_find_err_value, local.vm_ckfdiag_find_err_value);
+        swap(this->vm_ckfdiag_best_status, local.vm_ckfdiag_best_status);
+        swap(this->vm_ckfdiag_best_n_states, local.vm_ckfdiag_best_n_states);
+        swap(this->vm_ckfdiag_best_n_meas, local.vm_ckfdiag_best_n_meas);
+        swap(this->vm_ckfdiag_best_n_holes, local.vm_ckfdiag_best_n_holes);
+        swap(this->vm_ckfdiag_best_n_outliers, local.vm_ckfdiag_best_n_outliers);
+        swap(this->vm_ckfdiag_best_last_station, local.vm_ckfdiag_best_last_station);
+        swap(this->vm_ckfdiag_best_first_hole_station, local.vm_ckfdiag_best_first_hole_station);
+        swap(this->vm_ckfdiag_best_station_mask, local.vm_ckfdiag_best_station_mask);
+        swap(this->vm_ckfdiag_cand_per_station, local.vm_ckfdiag_cand_per_station);
+        swap(this->m_ckfdiagMaxStation, local.m_ckfdiagMaxStation);
+        swap(this->m_hasCkfActsStatesUnfiltered, local.m_hasCkfActsStatesUnfiltered);
+        swap(this->m_hasCkfActsTracksUnfiltered, local.m_hasCkfActsTracksUnfiltered);
         m_tree->Fill();
     }
 }

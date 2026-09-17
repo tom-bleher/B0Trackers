@@ -249,6 +249,21 @@ private:
         std::vector<int>    vm_truth_seed_made_unfiltered_track, vm_truth_seed_survived_ambiguity;
         std::vector<int>    vm_truth_seed_n_unfiltered_tracks, vm_truth_seed_n_filtered_tracks;
 
+        // Per-stub-seed CKF failure diagnostics (schema 4). Parallel to the
+        // stub-seed input order (including null entries); use
+        // ckfdiag_seed_index (PODIO ObjectID) for a robust join.
+        std::vector<int>    vm_ckfdiag_seed_index, vm_ckfdiag_seed_n_stations;
+        std::vector<double> vm_ckfdiag_truth_p, vm_ckfdiag_truth_theta, vm_ckfdiag_truth_phi;
+        std::vector<int>    vm_ckfdiag_n_candidates, vm_ckfdiag_n_accepted, vm_ckfdiag_stage;
+        std::vector<int>    vm_ckfdiag_find_err_class, vm_ckfdiag_find_err_value;
+        std::vector<int>    vm_ckfdiag_best_status;
+        std::vector<int>    vm_ckfdiag_best_n_states, vm_ckfdiag_best_n_meas;
+        std::vector<int>    vm_ckfdiag_best_n_holes, vm_ckfdiag_best_n_outliers;
+        std::vector<int>    vm_ckfdiag_best_last_station, vm_ckfdiag_best_first_hole_station;
+        std::vector<int>    vm_ckfdiag_best_station_mask;
+        std::vector<std::vector<int>> vm_ckfdiag_cand_per_station;
+        int m_ckfdiagMaxStation = -1;
+
         TrackChain m_ts;
         TrackChain m_ckf;
 
@@ -319,6 +334,8 @@ private:
         bool m_hasCkfActsTracks = false;
         bool m_hasCkfTracksUnfiltered = false;
         bool m_hasCkfAssocsUnfiltered = false;
+        bool m_hasCkfActsStatesUnfiltered = false;
+        bool m_hasCkfActsTracksUnfiltered = false;
     };
 
     TTree* m_tree = nullptr;
@@ -409,6 +426,18 @@ private:
     std::vector<int>    vm_truth_seed_made_unfiltered_track, vm_truth_seed_survived_ambiguity;
     std::vector<int>    vm_truth_seed_n_unfiltered_tracks, vm_truth_seed_n_filtered_tracks;
 
+    std::vector<int>    vm_ckfdiag_seed_index, vm_ckfdiag_seed_n_stations;
+    std::vector<double> vm_ckfdiag_truth_p, vm_ckfdiag_truth_theta, vm_ckfdiag_truth_phi;
+    std::vector<int>    vm_ckfdiag_n_candidates, vm_ckfdiag_n_accepted, vm_ckfdiag_stage;
+    std::vector<int>    vm_ckfdiag_find_err_class, vm_ckfdiag_find_err_value;
+    std::vector<int>    vm_ckfdiag_best_status;
+    std::vector<int>    vm_ckfdiag_best_n_states, vm_ckfdiag_best_n_meas;
+    std::vector<int>    vm_ckfdiag_best_n_holes, vm_ckfdiag_best_n_outliers;
+    std::vector<int>    vm_ckfdiag_best_last_station, vm_ckfdiag_best_first_hole_station;
+    std::vector<int>    vm_ckfdiag_best_station_mask;
+    std::vector<std::vector<int>> vm_ckfdiag_cand_per_station;
+    int m_ckfdiagMaxStation = -1;
+
     TrackChain m_ts;
     TrackChain m_ckf;
 
@@ -479,4 +508,6 @@ private:
     bool m_hasCkfActsTracks = false;
     bool m_hasCkfTracksUnfiltered = false;
     bool m_hasCkfAssocsUnfiltered = false;
+    bool m_hasCkfActsStatesUnfiltered = false;
+    bool m_hasCkfActsTracksUnfiltered = false;
 };

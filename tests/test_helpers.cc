@@ -90,7 +90,42 @@ int main() {
     }
     CHECK(closeTo(wrapPi(0.1), 0.1));
 
-    CHECK(kSchemaVersion == 3);
+    CHECK(kSchemaVersion == 4);
+
+    // ckfdiag wire codes mirror eicrecon::b0counters::ckfdiag; the checks below
+    // pin the values so a one-sided edit breaks loudly here instead of
+    // silently mislabelling CKF rows.
+    CHECK(ckfdiag::kAccepted == 0);
+    CHECK(ckfdiag::kNoValidMeasurement == 1);
+    CHECK(ckfdiag::kTooFewHits == 2);
+    CHECK(ckfdiag::kTooFewStations == 3);
+    CHECK(ckfdiag::kSmoothingFailed == 4);
+    CHECK(ckfdiag::kExtrapolationFailed == 5);
+    CHECK(ckfdiag::kFindFailed == 6);
+    CHECK(ckfdiag::kNoCandidates == 7);
+    CHECK(ckfdiag::kFindErrNone == 0);
+    CHECK(ckfdiag::kFindErrCkf == 1);
+    CHECK(ckfdiag::kFindErrPropagation == 2);
+    CHECK(ckfdiag::kStageUnknown == -1);
+    CHECK(ckfdiag::kStageAccepted == 0);
+    CHECK(ckfdiag::kStageAllRejected == 1);
+    CHECK(ckfdiag::kStageFindFailed == 2);
+    CHECK(ckfdiag::kStageFindEmpty == 3);
+
+    CHECK(ckfdiag::packFindError(2, 5) == 2005);
+    CHECK(ckfdiag::findErrorClass(2005) == 2);
+    CHECK(ckfdiag::findErrorValue(2005) == 5);
+    CHECK(ckfdiag::findErrorClass(ckfdiag::packFindError(0, 0)) == 0);
+
+    // Best-candidate ordering: accepted first, then measurements, holes, status.
+    CHECK(ckfdiag::isBetterCandidate(true, 3, 1, 0, false, 4, 0, 1, true));
+    CHECK(ckfdiag::isBetterCandidate(true, 4, 0, 0, true, 3, 0, 0, true));
+    CHECK(ckfdiag::isBetterCandidate(true, 4, 0, 0, true, 4, 1, 0, true));
+    CHECK(ckfdiag::isBetterCandidate(true, 4, 1, 1, true, 4, 1, 2, true));
+    CHECK(!ckfdiag::isBetterCandidate(false, 4, 0, 1, true, 3, 0, 0, true));
+    CHECK(!ckfdiag::isBetterCandidate(true, 3, 0, 0, true, 4, 0, 0, true));
+    CHECK(!ckfdiag::isBetterCandidate(true, 4, 1, 0, true, 4, 0, 0, true));
+    CHECK(ckfdiag::isBetterCandidate(false, 0, 0, 5, false, 0, 0, 0, false));
     CHECK(preferredEstimateKind(true, false, false) == kEstimatePredicted);
     CHECK(preferredEstimateKind(true, true, false) == kEstimateFiltered);
     CHECK(preferredEstimateKind(true, true, true) == kEstimateSmoothed);

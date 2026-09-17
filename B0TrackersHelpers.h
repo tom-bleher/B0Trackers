@@ -10,7 +10,7 @@
 
 namespace b0trk {
 
-inline constexpr int kSchemaVersion = 3;
+inline constexpr int kSchemaVersion = 4;
 
 inline constexpr int kMapUnresolved = 0;
 inline constexpr int kMapExact      = 1;
@@ -73,6 +73,69 @@ inline int stationFromLayerId(int layer, bool perPlaneFrontBack) {
     }
     return perPlaneFrontBack ? (layer + 1) / 2 : layer;
 }
+
+// Per-seed CKF failure diagnostics (schema 4).
+//
+// The status codes mirror eicrecon::b0counters::ckfdiag
+// (EICrecon/src/algorithms/tracking/B0ReconstructionCounters.h), which owns
+// the canonical definition written into the unfiltered ACTS containers by
+// CKFTracking. The values are duplicated here -- rather than included --
+// because the standalone helper test builds without EICrecon headers, so a
+// mismatch would surface as wrong diagnostics, not a build error. Keep them
+// in sync by hand.
+namespace ckfdiag {
+
+inline constexpr unsigned kAccepted = 0;
+inline constexpr unsigned kNoValidMeasurement = 1;
+inline constexpr unsigned kTooFewHits = 2;
+inline constexpr unsigned kTooFewStations = 3;
+inline constexpr unsigned kSmoothingFailed = 4;
+inline constexpr unsigned kExtrapolationFailed = 5;
+inline constexpr unsigned kFindFailed = 6;
+inline constexpr unsigned kNoCandidates = 7;
+
+inline constexpr unsigned kFindErrNone = 0;
+inline constexpr unsigned kFindErrCkf = 1;
+inline constexpr unsigned kFindErrPropagation = 2;
+
+// Per-seed CKF outcome stage: -1 means the unfiltered ACTS containers were
+// unavailable, so the stage is unknowable rather than failed.
+inline constexpr int kStageUnknown = -1;
+inline constexpr int kStageAccepted = 0;
+inline constexpr int kStageAllRejected = 1;
+inline constexpr int kStageFindFailed = 2;
+inline constexpr int kStageFindEmpty = 3;
+
+inline unsigned packFindError(unsigned errorClass, unsigned errorValue) {
+    return errorClass * 1000u + (errorValue % 1000u);
+}
+
+inline unsigned findErrorClass(unsigned packed) { return packed / 1000u; }
+
+inline unsigned findErrorValue(unsigned packed) { return packed % 1000u; }
+
+// Best-candidate selection: an accepted candidate beats any rejected one,
+// then most measurements, fewest holes, lowest status. With haveBest == false
+// the candidate is selected unconditionally.
+inline bool isBetterCandidate(bool accepted, int nMeas, int nHoles, unsigned status,
+                              bool bestAccepted, int bestMeas, int bestHoles,
+                              unsigned bestStatus, bool haveBest) {
+    if (!haveBest) {
+        return true;
+    }
+    if (accepted != bestAccepted) {
+        return accepted;
+    }
+    if (nMeas != bestMeas) {
+        return nMeas > bestMeas;
+    }
+    if (nHoles != bestHoles) {
+        return nHoles < bestHoles;
+    }
+    return status < bestStatus;
+}
+
+} // namespace ckfdiag
 
 // Layer DetElement names:
 //   B0Tracker_layer{station}_{front|back}_P  (realistic)
