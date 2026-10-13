@@ -8,6 +8,7 @@ on:
       - 'B0TrackersHelpers.h'
       - 'CMakeLists.txt'
       - '.github/workflows/plugin-build.yml'
+      - '.github/scripts/**'
   workflow_dispatch:
 
 permissions:
@@ -28,3 +29,12 @@ jobs:
             cmake -S . -B build-plugin -DBUILD_TESTING=ON
             cmake --build build-plugin --parallel 2
             ctest --test-dir build-plugin --output-on-failure -R B0TrackersHelpers
+      - name: Smoke-run the plugin in eicrecon
+        uses: eic/run-cvmfs-osg-eic-shell@main
+        with:
+          organization: eicweb
+          platform-release: eic_xl:nightly
+          run: |
+            mkdir -p plugins
+            cp build-plugin/B0Trackers.so plugins/
+            .github/scripts/smoke.sh plugins smoke
