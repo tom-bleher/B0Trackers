@@ -29,11 +29,12 @@ stations. This is intentionally called **truth reachability**, not measurement-
 level reconstructability: a SimHit crossing does not guarantee a digitized,
 usable measurement. It is best suited to controlled single-primary samples.
 
-Schema-2 state residuals also need care: the plugin currently stores the best
-available state in the order smoothed -> filtered -> predicted, without a branch
-recording which estimate was chosen. These residuals are therefore fit-quality
-diagnostics, not an intrinsic AC-LGAD spatial-resolution measurement. A future
-schema should export the estimate kind and predicted innovation/pull explicitly.
+State residuals also need care: `*_state_resid_*` use the best available
+state in the order smoothed -> filtered -> predicted, recorded per row in
+`*_state_estimate_kind` (3 smoothed, 2 filtered, 1 predicted). Smoothed
+residuals include the hit itself and are shrunk, so they are fit-quality
+diagnostics, not an intrinsic AC-LGAD spatial resolution. The unbiased
+quantities are the predicted innovations `*_state_innov*` and their pulls.
 
 Likewise, schema 2 increments `n_sensor_map_failed` for some non-physics states
 that are not expected to map to a B0 sensor. The report preserves that raw count

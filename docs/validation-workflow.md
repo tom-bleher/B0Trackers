@@ -12,9 +12,18 @@ python3 analysis/make_run_manifest.py \
   --eicrecon-repo ~/eic/dev/EICrecon \
   --epic-repo ~/eic/dev/epic \
   --events 10000 \
-  --arg=-PB0TrackerStubSeeder:minStations=3 \
-  --arg=-PB0TrackerCKFTracking:numMeasurementsMin=3
+  --arg=-Ptracking:B0TrackerSeeds:maxResidual=1 \
+  --arg=-Ptracking:B0TrackerCKFTrajectories:NumMeasurementsMin=3
 ```
+
+Parameter keys carry the plugin prefix (`tracking:`), and EICrecon runs with
+`jana:parameter_strictness=2`, so an unregistered `-P` name aborts the job
+with "Unrecognized parameters found!". The full table, including defaults,
+is printed in the eicrecon log. On `eic/EICrecon@b0_trackers_triplet_seeding`
+the seeder is `tracking:B0TrackerSeeds` (`stationGap`, `maxResidual`,
+`minMomentum`, `anchorDistance`, `maxSeeds`, ...), and the CKF is
+`tracking:B0TrackerCKFTrajectories`, whose `NumMeasurementsMin` already
+defaults to 3 for B0.
 
 The manifest records:
 
