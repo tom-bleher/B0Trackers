@@ -61,18 +61,18 @@
 #include <Acts/Surfaces/Surface.hpp>
 #include <Acts/Utilities/Logger.hpp>
 
-#include <edm4hep/MCParticle.h>
-#include <edm4hep/SimTrackerHit.h>
+#include <edm4hep/MCParticleCollection.h>
+#include <edm4hep/SimTrackerHitCollection.h>
 
-#include <edm4eic/MCRecoTrackParticleAssociation.h>
-#include <edm4eic/MCRecoTrackerHitAssociation.h>
-#include <edm4eic/Measurement2D.h>
-#include <edm4eic/RawTrackerHit.h>
-#include <edm4eic/Track.h>
-#include <edm4eic/TrackParameters.h>
-#include <edm4eic/TrackSeed.h>
-#include <edm4eic/TrackerHit.h>
-#include <edm4eic/Trajectory.h>
+#include <edm4eic/MCRecoTrackParticleAssociationCollection.h>
+#include <edm4eic/MCRecoTrackerHitAssociationCollection.h>
+#include <edm4eic/Measurement2DCollection.h>
+#include <edm4eic/RawTrackerHitCollection.h>
+#include <edm4eic/TrackCollection.h>
+#include <edm4eic/TrackParametersCollection.h>
+#include <edm4eic/TrackSeedCollection.h>
+#include <edm4eic/TrackerHitCollection.h>
+#include <edm4eic/TrajectoryCollection.h>
 
 #include <DD4hep/Objects.h>
 
@@ -132,20 +132,69 @@ namespace {
 // optional products are reported through has_* branches rather than by
 // conflating absence with emptiness.
 
-// Required: any failure propagates and aborts the job.
+// PODIO collections live in JPodioDatabundles, which JEvent::Get<T> cannot
+// read (it throws "does not inherit from JLightweightDatabundleT"), and
+// GetFactory<T> returns null for JOmniFactory outputs even when they exist.
+// They are therefore read with GetCollection. The view holds the object
+// handles for the duration of Process() and exposes stable const T* so the
+// analysis below can treat PODIO collections and ACTS containers alike.
+// Moving is safe: a moved std::vector keeps its buffer, so the pointers stay
+// valid. Copying would leave them pointing into the source, so it is deleted.
 template <typename T>
-std::vector<const T*> getRequired(const std::shared_ptr<const JEvent>& event, const char* name) {
-    return event->Get<T>(name);
+class PodioView {
+public:
+    PodioView() = default;
+    explicit PodioView(const typename T::collection_type* collection) {
+        if (collection == nullptr) {
+            return;
+        }
+        m_objects.reserve(collection->size());
+        for (const auto& object : *collection) {
+            m_objects.push_back(object);
+        }
+        m_pointers.reserve(m_objects.size());
+        for (const auto& object : m_objects) {
+            m_pointers.push_back(&object);
+        }
+    }
+    PodioView(const PodioView&) = delete;
+    PodioView& operator=(const PodioView&) = delete;
+    PodioView(PodioView&&) noexcept = default;
+    PodioView& operator=(PodioView&&) noexcept = default;
+
+    std::size_t size() const { return m_pointers.size(); }
+    bool empty() const { return m_pointers.empty(); }
+    const T* operator[](std::size_t i) const { return m_pointers[i]; }
+    auto begin() const { return m_pointers.begin(); }
+    auto end() const { return m_pointers.end(); }
+
+private:
+    std::vector<T> m_objects;
+    std::vector<const T*> m_pointers;
+};
+
+// Required: a missing collection or any upstream failure aborts the job.
+template <typename T>
+PodioView<T> getRequired(const std::shared_ptr<const JEvent>& event, const char* name) {
+    return PodioView<T>(event->GetCollection<T>(name));
 }
 
-// Optional: returns false only when no factory is registered for (T, name).
+// Optional: returns false only when no producer is registered under `name`.
 // An exception thrown *by* an existing factory still propagates -- that is a
 // reconstruction failure, not an absent collection.
+template <typename T>
+bool getOpt(const std::shared_ptr<const JEvent>& event, const char* name, PodioView<T>& out) {
+    const auto* collection = event->GetCollection<T>(name, false);
+    out = PodioView<T>(collection);
+    return collection != nullptr;
+}
+
+// Optional non-PODIO products (the ACTS track containers).
 template <typename T>
 bool getOpt(const std::shared_ptr<const JEvent>& event, const char* name,
             std::vector<const T*>& out) {
     out.clear();
-    if (event->GetFactory<T>(name, false) == nullptr) {
+    if (event->template GetLightweightDatabundle<T>(name, false, false) == nullptr) {
         return false;
     }
     out = event->Get<T>(name);
@@ -975,9 +1024,9 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     auto measurements = getRequired<edm4eic::Measurement2D>(event, "B0TrackerMeasurements");
 
     // Optional -- a configuration may legitimately not run these stages.
-    std::vector<const edm4eic::MCRecoTrackerHitAssociation*> rawAssocs;
-    std::vector<const edm4eic::TrackSeed*> stubSeeds;
-    std::vector<const edm4eic::TrackSeed*> truthSeeds;
+    PodioView<edm4eic::MCRecoTrackerHitAssociation> rawAssocs;
+    PodioView<edm4eic::TrackSeed> stubSeeds;
+    PodioView<edm4eic::TrackSeed> truthSeeds;
     const bool hasRawAssocs =
         getOpt(event, "B0TrackerRawHitAssociations", rawAssocs);
     bool hasStubSeeds = false;
@@ -985,15 +1034,15 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     if (m_enableStubSeededChain) hasStubSeeds = getOpt(event, "B0TrackerSeeds", stubSeeds);
     if (m_enableTruthSeededChain) hasTruthSeeds = getOpt(event, "B0TrackerTruthSeeds", truthSeeds);
 
-    std::vector<const edm4eic::TrackParameters*> tsTracks;
-    std::vector<const edm4eic::Trajectory*> tsTrajectories;
-    std::vector<const edm4eic::Trajectory*> tsTrajectoriesUnfiltered;
-    std::vector<const edm4eic::Track*> tsEdmTracks;
-    std::vector<const edm4eic::MCRecoTrackParticleAssociation*> tsAssocs;
+    PodioView<edm4eic::TrackParameters> tsTracks;
+    PodioView<edm4eic::Trajectory> tsTrajectories;
+    PodioView<edm4eic::Trajectory> tsTrajectoriesUnfiltered;
+    PodioView<edm4eic::Track> tsEdmTracks;
+    PodioView<edm4eic::MCRecoTrackParticleAssociation> tsAssocs;
     std::vector<const Acts::ConstVectorMultiTrajectory*> tsActsTrackStates;
     std::vector<const Acts::ConstVectorTrackContainer*> tsActsTracks;
-    std::vector<const edm4eic::Track*> tsUnfiltered;
-    std::vector<const edm4eic::MCRecoTrackParticleAssociation*> tsUnfilteredAssocs;
+    PodioView<edm4eic::Track> tsUnfiltered;
+    PodioView<edm4eic::MCRecoTrackParticleAssociation> tsUnfilteredAssocs;
     std::vector<const Acts::ConstVectorMultiTrajectory*> tsActsTrackStatesUnfilt;
     std::vector<const Acts::ConstVectorTrackContainer*> tsActsTracksUnfilt;
     bool hasTsTrackParams = false;
@@ -1027,15 +1076,15 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         }
     }
 
-    std::vector<const edm4eic::TrackParameters*> ckfTracks;
-    std::vector<const edm4eic::Trajectory*> ckfTrajectories;
-    std::vector<const edm4eic::Trajectory*> ckfTrajectoriesUnfiltered;
-    std::vector<const edm4eic::Track*> ckfEdmTracks;
-    std::vector<const edm4eic::MCRecoTrackParticleAssociation*> ckfAssocs;
+    PodioView<edm4eic::TrackParameters> ckfTracks;
+    PodioView<edm4eic::Trajectory> ckfTrajectories;
+    PodioView<edm4eic::Trajectory> ckfTrajectoriesUnfiltered;
+    PodioView<edm4eic::Track> ckfEdmTracks;
+    PodioView<edm4eic::MCRecoTrackParticleAssociation> ckfAssocs;
     std::vector<const Acts::ConstVectorMultiTrajectory*> ckfActsTrackStates;
     std::vector<const Acts::ConstVectorTrackContainer*> ckfActsTracks;
-    std::vector<const edm4eic::Track*> ckfUnfiltered;
-    std::vector<const edm4eic::MCRecoTrackParticleAssociation*> ckfUnfilteredAssocs;
+    PodioView<edm4eic::Track> ckfUnfiltered;
+    PodioView<edm4eic::MCRecoTrackParticleAssociation> ckfUnfilteredAssocs;
     bool hasCkfTrackParams = false;
     bool hasCkfTrajectories = false;
     bool hasCkfTrajectoriesUnfiltered = false;
