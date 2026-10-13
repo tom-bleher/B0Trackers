@@ -90,7 +90,23 @@ int main() {
     }
     CHECK(closeTo(wrapPi(0.1), 0.1));
 
-    CHECK(kSchemaVersion == 6);
+    CHECK(kSchemaVersion == 10);
+
+    CHECK(tsloc::classifyLocal(true, true) == tsloc::kLocalOk);
+    CHECK(tsloc::classifyLocal(true, false) == tsloc::kLocalTargetBug);
+    CHECK(tsloc::classifyLocal(false, false) == tsloc::kLocalBoundsMapping);
+    CHECK(tsloc::classifyLocal(false, true) == tsloc::kLocalInconsistent);
+
+    CHECK(tsloc::chargeFromPdg(2212) == +1);
+    CHECK(tsloc::chargeFromPdg(-2212) == -1);
+    CHECK(tsloc::chargeFromPdg(11) == -1);
+    CHECK(tsloc::chargeFromPdg(-11) == +1);
+    CHECK(tsloc::chargeFromPdg(211) == +1);
+    CHECK(tsloc::chargeFromPdg(-211) == -1);
+    CHECK(tsloc::chargeFromPdg(13) == -1);
+    CHECK(tsloc::chargeFromPdg(2112) == 0);
+    CHECK(tsloc::chargeFromPdg(22) == 0);
+    CHECK(tsloc::chargeFromPdg(999) == 0);
 
     // ckfdiag wire codes mirror eicrecon::b0counters::ckfdiag; the checks below
     // pin the values so a one-sided edit breaks loudly here instead of

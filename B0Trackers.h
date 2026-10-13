@@ -21,6 +21,10 @@
 
 #include "B0TrackersHelpers.h"
 
+namespace Acts {
+class Surface;
+} // namespace Acts
+
 class TTree;
 class ACTSGeo_service;
 class ActsGeometryProvider;
@@ -61,6 +65,9 @@ private:
     bool m_enableStubSeededChain = true;
     bool m_writeTrackStates = true;
     std::string m_dumpSurfaceMap;
+    bool m_writePropagation = false;
+    bool m_writeLocal = false;
+    double m_localEpsilon = 2.0;
     void dumpSurfaceMap(const std::string& path);
 
     struct SensorRef {
@@ -76,6 +83,15 @@ private:
     std::unordered_map<std::uint64_t, std::size_t> m_surfaceToSensorIdx;
     std::map<std::pair<int, int>, int> m_moduleToSide;
     std::map<int, int> m_layerToStation;
+    void ensurePropSurfaces(const std::shared_ptr<const ActsGeometryProvider>& geo);
+    // Cached ACTS surfaces for mapped B0 sensors (schema-9 propagation).
+    std::vector<const Acts::Surface*> m_propSurfaces;
+    // Parallel to m_propSurfaces: station per surface (schema 10 test B).
+    std::vector<int> m_propSurfaceStation;
+    // (plane, module, sensor) -> mapped ACTS surface (schema 10 test A).
+    std::map<std::tuple<int, int, int>, const Acts::Surface*> m_sensorSurface;
+    std::mutex m_propMutex;
+    bool m_propSurfacesReady = false;
 
     int stationOf(int layer) const;
 
@@ -284,6 +300,29 @@ private:
         std::vector<double> vm_ckfdiag_unf_dmeas_t0, vm_ckfdiag_unf_dmeas_t1;
         std::vector<double> vm_ckfdiag_unf_tdist_prim, vm_ckfdiag_unf_tdist_other;
         std::vector<int> vm_ckfdiag_unf_nprim_st, vm_ckfdiag_unf_noth_st;
+        // Schema 7: 0 = stub-seeded chain, 1 = truth-seeded chain; per-row
+        // MC association (for stub rows the selected primary, -1 when none).
+        std::vector<int> vm_ckfdiag_unf_chain, vm_ckfdiag_unf_mcindex;
+        std::vector<std::uint32_t> vm_ckfdiag_unf_mccol;
+        // Schema 8: reference-surface identity and predicted global position,
+        // to separate wrong-sensor navigation from bad propagation.
+        std::vector<std::uint64_t> vm_ckfdiag_unf_geoid;
+        std::vector<double> vm_ckfdiag_unf_pgx, vm_ckfdiag_unf_pgy, vm_ckfdiag_unf_pgz;
+        std::vector<int> vm_tsprop_seedpos, vm_tsprop_mcindex, vm_tsprop_station;
+        std::vector<int> vm_tsprop_reached;
+        std::vector<std::uint32_t> vm_tsprop_mccol;
+        std::vector<std::uint64_t> vm_tsprop_geoid;
+        std::vector<double> vm_tsprop_loc0, vm_tsprop_loc1;
+        std::vector<double> vm_tsprop_gx, vm_tsprop_gy, vm_tsprop_gz;
+        std::vector<int> vm_tsloc_test, vm_tsloc_hitidx;
+        std::vector<int> vm_tsloc_hitstation, vm_tsloc_tgtstation;
+        std::vector<int> vm_tsloc_ixvalid, vm_tsloc_reached, vm_tsloc_cell;
+        std::vector<int> vm_tsloc_err;
+        std::vector<std::uint64_t> vm_tsloc_geoid;
+        std::vector<double> vm_tsloc_epsilon, vm_tsloc_ixpath;
+        std::vector<double> vm_tsloc_loc0, vm_tsloc_loc1;
+        std::vector<double> vm_tsloc_gx, vm_tsloc_gy, vm_tsloc_gz;
+        std::vector<double> vm_tsloc_dhit, vm_tsloc_edge;
 
         TrackChain m_ts;
         TrackChain m_ckf;
@@ -346,6 +385,9 @@ private:
         bool m_hasTsActsStates = false;
         bool m_hasTsActsTracks = false;
         bool m_hasTsTracksUnfiltered = false;
+        bool m_hasTsUnfilteredAssocs = false;
+        bool m_hasTsActsStatesUnfiltered = false;
+        bool m_hasTsActsTracksUnfiltered = false;
         bool m_hasCkfTrackParams = false;
         bool m_hasCkfTrajectories = false;
         bool m_hasCkfTrajectoriesUnfiltered = false;
@@ -470,6 +512,31 @@ private:
     std::vector<double> vm_ckfdiag_unf_dmeas_t0, vm_ckfdiag_unf_dmeas_t1;
     std::vector<double> vm_ckfdiag_unf_tdist_prim, vm_ckfdiag_unf_tdist_other;
     std::vector<int> vm_ckfdiag_unf_nprim_st, vm_ckfdiag_unf_noth_st;
+    std::vector<int> vm_ckfdiag_unf_chain, vm_ckfdiag_unf_mcindex;
+    std::vector<std::uint32_t> vm_ckfdiag_unf_mccol;
+    std::vector<std::uint64_t> vm_ckfdiag_unf_geoid;
+    std::vector<double> vm_ckfdiag_unf_pgx, vm_ckfdiag_unf_pgy, vm_ckfdiag_unf_pgz;
+    // Schema 9: single-propagation arrivals of truth seeds at mapped B0
+    // surfaces (opt-in via write_propagation).
+    std::vector<int> vm_tsprop_seedpos, vm_tsprop_mcindex, vm_tsprop_station;
+    std::vector<int> vm_tsprop_reached;
+    std::vector<std::uint32_t> vm_tsprop_mccol;
+    std::vector<std::uint64_t> vm_tsprop_geoid;
+    std::vector<double> vm_tsprop_loc0, vm_tsprop_loc1;
+    std::vector<double> vm_tsprop_gx, vm_tsprop_gy, vm_tsprop_gz;
+    // Schema 10: SimHit-anchored local propagation (opt-in via
+    // write_local_propagation). test 0 = epsilon-upstream of a SimHit to its
+    // own surface; test 1 = SimHit at station n to station n+1 surfaces;
+    // test 2 = start at the hit targeting its own surface (no crossing).
+    std::vector<int> vm_tsloc_test, vm_tsloc_hitidx;
+    std::vector<int> vm_tsloc_hitstation, vm_tsloc_tgtstation;
+    std::vector<int> vm_tsloc_ixvalid, vm_tsloc_reached, vm_tsloc_cell;
+    std::vector<int> vm_tsloc_err;
+    std::vector<std::uint64_t> vm_tsloc_geoid;
+    std::vector<double> vm_tsloc_epsilon, vm_tsloc_ixpath;
+    std::vector<double> vm_tsloc_loc0, vm_tsloc_loc1;
+    std::vector<double> vm_tsloc_gx, vm_tsloc_gy, vm_tsloc_gz;
+    std::vector<double> vm_tsloc_dhit, vm_tsloc_edge;
 
     TrackChain m_ts;
     TrackChain m_ckf;
@@ -532,6 +599,9 @@ private:
     bool m_hasTsActsStates = false;
     bool m_hasTsActsTracks = false;
     bool m_hasTsTracksUnfiltered = false;
+    bool m_hasTsUnfilteredAssocs = false;
+    bool m_hasTsActsStatesUnfiltered = false;
+    bool m_hasTsActsTracksUnfiltered = false;
     bool m_hasCkfTrackParams = false;
     bool m_hasCkfTrajectories = false;
     bool m_hasCkfTrajectoriesUnfiltered = false;

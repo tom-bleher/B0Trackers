@@ -29,6 +29,7 @@ selected-primary hit nearest the measurement anchors the residuals.
   bad rather than the hit assignment.
 
 Limitations: truth positions are SimTrackerHit cell centers (pixel-scale
-approximation, fine against multi-mm discrepancies); hole states carry no
+approximation, fine against multi-mm discrepancies); hole states carry
+prediction residuals anchored on the prediction itself, but no measurement
 residuals; the number of source links tested per surface remains unobservable
 without ACTS actor instrumentation.

@@ -34,13 +34,32 @@
 #include <Acts/Definitions/Algebra.hpp>
 #include <Acts/Definitions/TrackParametrization.hpp>
 #include <Acts/Definitions/Units.hpp>
+#include <Acts/EventData/BoundTrackParameters.hpp>
 #include <Acts/EventData/ProxyAccessor.hpp>
 #include <Acts/EventData/TrackContainer.hpp>
 #include <Acts/EventData/TrackStateType.hpp>
 #include <Acts/EventData/VectorMultiTrajectory.hpp>
 #include <Acts/EventData/VectorTrackContainer.hpp>
 #include <Acts/Geometry/GeometryIdentifier.hpp>
+#include <Acts/MagneticField/MagneticFieldProvider.hpp>
+#include <Acts/Propagator/ActorList.hpp>
+#include <Acts/Propagator/EigenStepper.hpp>
+#include <Acts/Propagator/EigenStepperError.hpp>
+#include <Acts/Propagator/MaterialInteractor.hpp>
+#include <Acts/Propagator/Navigator.hpp>
+#include <Acts/Propagator/NavigatorError.hpp>
+#include <Acts/Propagator/PropagatorError.hpp>
+#include <Acts/Geometry/PortalError.hpp>
+#include <Acts/MagneticField/MagneticFieldError.hpp>
+#include <Acts/Surfaces/SurfaceError.hpp>
+#include <Acts/Propagator/Propagator.hpp>
+#include <Acts/Propagator/PropagatorOptions.hpp>
+#include <Acts/Propagator/StandardAborters.hpp>
+#include <Acts/Surfaces/BoundaryTolerance.hpp>
+#include <Acts/Surfaces/PerigeeSurface.hpp>
+#include <Acts/Surfaces/RectangleBounds.hpp>
 #include <Acts/Surfaces/Surface.hpp>
+#include <Acts/Utilities/Logger.hpp>
 
 #include <edm4hep/MCParticle.h>
 #include <edm4hep/SimTrackerHit.h>
@@ -267,6 +286,13 @@ void B0Trackers::Init() {
                              "Request ACTS track containers and write per-state diagnostics");
     app->SetDefaultParameter("B0Trackers:dump_surface_map", m_dumpSurfaceMap,
                              "Write B0 ACTS surface dump JSON at init (empty disables)");
+    app->SetDefaultParameter("B0Trackers:write_propagation", m_writePropagation,
+                             "Single-propagate truth seeds to every mapped B0 surface (schema 9)");
+    app->SetDefaultParameter("B0Trackers:write_local_propagation", m_writeLocal,
+                             "Local SimHit-anchored propagation tests: epsilon-upstream to own "
+                             "surface and station n to n+1 (schema 10)");
+    app->SetDefaultParameter("B0Trackers:local_epsilon_mm", m_localEpsilon,
+                             "Upstream offset [mm] for the same-surface local test (schema 10)");
 
     if (const char* cfg = std::getenv("DETECTOR_CONFIG")) {
         m_geometryName = cfg;
@@ -628,6 +654,42 @@ void B0Trackers::Init() {
     m_tree->Branch("ckfdiag_unf_tdist_other", &vm_ckfdiag_unf_tdist_other);
     m_tree->Branch("ckfdiag_unf_nprim_st", &vm_ckfdiag_unf_nprim_st);
     m_tree->Branch("ckfdiag_unf_noth_st", &vm_ckfdiag_unf_noth_st);
+    m_tree->Branch("ckfdiag_unf_chain", &vm_ckfdiag_unf_chain);
+    m_tree->Branch("ckfdiag_unf_mcindex", &vm_ckfdiag_unf_mcindex);
+    m_tree->Branch("ckfdiag_unf_mccol", &vm_ckfdiag_unf_mccol);
+    m_tree->Branch("ckfdiag_unf_geoid", &vm_ckfdiag_unf_geoid);
+    m_tree->Branch("ckfdiag_unf_pgx", &vm_ckfdiag_unf_pgx);
+    m_tree->Branch("ckfdiag_unf_pgy", &vm_ckfdiag_unf_pgy);
+    m_tree->Branch("ckfdiag_unf_pgz", &vm_ckfdiag_unf_pgz);
+    m_tree->Branch("tsprop_seedpos", &vm_tsprop_seedpos);
+    m_tree->Branch("tsprop_mcindex", &vm_tsprop_mcindex);
+    m_tree->Branch("tsprop_mccol", &vm_tsprop_mccol);
+    m_tree->Branch("tsprop_station", &vm_tsprop_station);
+    m_tree->Branch("tsprop_geoid", &vm_tsprop_geoid);
+    m_tree->Branch("tsprop_reached", &vm_tsprop_reached);
+    m_tree->Branch("tsprop_loc0", &vm_tsprop_loc0);
+    m_tree->Branch("tsprop_loc1", &vm_tsprop_loc1);
+    m_tree->Branch("tsprop_gx", &vm_tsprop_gx);
+    m_tree->Branch("tsprop_gy", &vm_tsprop_gy);
+    m_tree->Branch("tsprop_gz", &vm_tsprop_gz);
+    m_tree->Branch("tsloc_test", &vm_tsloc_test);
+    m_tree->Branch("tsloc_hitidx", &vm_tsloc_hitidx);
+    m_tree->Branch("tsloc_hitstation", &vm_tsloc_hitstation);
+    m_tree->Branch("tsloc_tgtstation", &vm_tsloc_tgtstation);
+    m_tree->Branch("tsloc_geoid", &vm_tsloc_geoid);
+    m_tree->Branch("tsloc_epsilon", &vm_tsloc_epsilon);
+    m_tree->Branch("tsloc_ixvalid", &vm_tsloc_ixvalid);
+    m_tree->Branch("tsloc_ixpath", &vm_tsloc_ixpath);
+    m_tree->Branch("tsloc_reached", &vm_tsloc_reached);
+    m_tree->Branch("tsloc_err", &vm_tsloc_err);
+    m_tree->Branch("tsloc_loc0", &vm_tsloc_loc0);
+    m_tree->Branch("tsloc_loc1", &vm_tsloc_loc1);
+    m_tree->Branch("tsloc_gx", &vm_tsloc_gx);
+    m_tree->Branch("tsloc_gy", &vm_tsloc_gy);
+    m_tree->Branch("tsloc_gz", &vm_tsloc_gz);
+    m_tree->Branch("tsloc_dhit", &vm_tsloc_dhit);
+    m_tree->Branch("tsloc_edge", &vm_tsloc_edge);
+    m_tree->Branch("tsloc_cell", &vm_tsloc_cell);
 
     m_tree->Branch("n_simhits", &m_nSimHits);
     m_tree->Branch("n_rawhits", &m_nRawHits);
@@ -659,6 +721,9 @@ void B0Trackers::Init() {
     m_tree->Branch("has_ts_acts_states", &m_hasTsActsStates);
     m_tree->Branch("has_ts_acts_tracks", &m_hasTsActsTracks);
     m_tree->Branch("has_ts_tracks_unfiltered", &m_hasTsTracksUnfiltered);
+    m_tree->Branch("has_ts_unfiltered_assocs", &m_hasTsUnfilteredAssocs);
+    m_tree->Branch("has_ts_acts_states_unfiltered", &m_hasTsActsStatesUnfiltered);
+    m_tree->Branch("has_ts_acts_tracks_unfiltered", &m_hasTsActsTracksUnfiltered);
     m_tree->Branch("has_ckf_track_params", &m_hasCkfTrackParams);
     m_tree->Branch("has_ckf_trajectories", &m_hasCkfTrajectories);
     m_tree->Branch("has_ckf_trajectories_unfiltered", &m_hasCkfTrajectoriesUnfiltered);
@@ -877,6 +942,30 @@ void B0Trackers::dumpSurfaceMap(const std::string& path) {
                 m_sensorRefs.size(), path);
 }
 
+void B0Trackers::ensurePropSurfaces(const std::shared_ptr<const ActsGeometryProvider>& geo) {
+    if (geo == nullptr) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(m_propMutex);
+    if (m_propSurfacesReady) {
+        return;
+    }
+    for (const auto& [volumeID, surface] : geo->surfaceMap()) {
+        if (surface == nullptr) {
+            continue;
+        }
+        const auto idxIt = m_surfaceToSensorIdx.find(surface->geometryId().value());
+        if (idxIt == m_surfaceToSensorIdx.end()) {
+            continue;
+        }
+        const auto& ref = m_sensorRefs[idxIt->second];
+        m_propSurfaces.push_back(surface);
+        m_propSurfaceStation.push_back(ref.station);
+        m_sensorSurface[{ref.plane, ref.module, ref.sensor}] = surface;
+    }
+    m_propSurfacesReady = true;
+}
+
 void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     // Required -- a missing or throwing factory here aborts the job.
     auto mcparticles  = getRequired<edm4hep::MCParticle>(event, "MCParticles");
@@ -904,6 +993,9 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     std::vector<const Acts::ConstVectorMultiTrajectory*> tsActsTrackStates;
     std::vector<const Acts::ConstVectorTrackContainer*> tsActsTracks;
     std::vector<const edm4eic::Track*> tsUnfiltered;
+    std::vector<const edm4eic::MCRecoTrackParticleAssociation*> tsUnfilteredAssocs;
+    std::vector<const Acts::ConstVectorMultiTrajectory*> tsActsTrackStatesUnfilt;
+    std::vector<const Acts::ConstVectorTrackContainer*> tsActsTracksUnfilt;
     bool hasTsTrackParams = false;
     bool hasTsTrajectories = false;
     bool hasTsTrajectoriesUnfiltered = false;
@@ -912,6 +1004,9 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     bool hasTsActsStates = false;
     bool hasTsActsTracks = false;
     bool hasTsTracksUnfiltered = false;
+    bool hasTsUnfilteredAssocs = false;
+    bool hasTsActsStatesUnfiltered = false;
+    bool hasTsActsTracksUnfiltered = false;
     if (m_enableTruthSeededChain) {
         hasTsTrackParams = getOpt(event, "B0TrackerCKFTruthSeededTrackParameters", tsTracks);
         hasTsTrajectories = getOpt(event, "B0TrackerCKFTruthSeededTrajectories", tsTrajectories);
@@ -920,9 +1015,15 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         hasTsTracks = getOpt(event, "B0TrackerCKFTruthSeededTracks", tsEdmTracks);
         hasTsAssocs = getOpt(event, "B0TrackerCKFTruthSeededTrackAssociations", tsAssocs);
         hasTsTracksUnfiltered = getOpt(event, "B0TrackerCKFTruthSeededTracksUnfiltered", tsUnfiltered);
+        hasTsUnfilteredAssocs = getOpt(
+            event, "B0TrackerCKFTruthSeededTrackUnfilteredAssociations", tsUnfilteredAssocs);
         if (m_writeTrackStates) {
             hasTsActsStates = getOpt(event, "B0TrackerCKFTruthSeededActsTrackStates", tsActsTrackStates);
             hasTsActsTracks = getOpt(event, "B0TrackerCKFTruthSeededActsTracks", tsActsTracks);
+            hasTsActsStatesUnfiltered = getOpt(
+                event, "B0TrackerCKFTruthSeededActsTrackStatesUnfiltered", tsActsTrackStatesUnfilt);
+            hasTsActsTracksUnfiltered = getOpt(
+                event, "B0TrackerCKFTruthSeededActsTracksUnfiltered", tsActsTracksUnfilt);
         }
     }
 
@@ -990,6 +1091,9 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     local.m_hasTsActsStates            = hasTsActsStates;
     local.m_hasTsActsTracks            = hasTsActsTracks;
     local.m_hasTsTracksUnfiltered      = hasTsTracksUnfiltered;
+    local.m_hasTsUnfilteredAssocs      = hasTsUnfilteredAssocs;
+    local.m_hasTsActsStatesUnfiltered  = hasTsActsStatesUnfiltered;
+    local.m_hasTsActsTracksUnfiltered  = hasTsActsTracksUnfiltered;
     local.m_hasCkfTrackParams          = hasCkfTrackParams;
     local.m_hasCkfTrajectories         = hasCkfTrajectories;
     local.m_hasCkfTrajectoriesUnfiltered = hasCkfTrajectoriesUnfiltered;
@@ -1096,6 +1200,24 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     local.vm_ckfdiag_unf_dmeas_t0.clear(); local.vm_ckfdiag_unf_dmeas_t1.clear();
     local.vm_ckfdiag_unf_tdist_prim.clear(); local.vm_ckfdiag_unf_tdist_other.clear();
     local.vm_ckfdiag_unf_nprim_st.clear(); local.vm_ckfdiag_unf_noth_st.clear();
+    local.vm_ckfdiag_unf_chain.clear(); local.vm_ckfdiag_unf_mcindex.clear();
+    local.vm_ckfdiag_unf_mccol.clear();
+    local.vm_ckfdiag_unf_geoid.clear();
+    local.vm_ckfdiag_unf_pgx.clear(); local.vm_ckfdiag_unf_pgy.clear();
+    local.vm_ckfdiag_unf_pgz.clear();
+    local.vm_tsprop_seedpos.clear(); local.vm_tsprop_mcindex.clear();
+    local.vm_tsprop_mccol.clear(); local.vm_tsprop_station.clear();
+    local.vm_tsprop_geoid.clear(); local.vm_tsprop_reached.clear();
+    local.vm_tsprop_loc0.clear(); local.vm_tsprop_loc1.clear();
+    local.vm_tsprop_gx.clear(); local.vm_tsprop_gy.clear(); local.vm_tsprop_gz.clear();
+    local.vm_tsloc_test.clear(); local.vm_tsloc_hitidx.clear();
+    local.vm_tsloc_hitstation.clear(); local.vm_tsloc_tgtstation.clear();
+    local.vm_tsloc_geoid.clear(); local.vm_tsloc_epsilon.clear();
+    local.vm_tsloc_ixvalid.clear(); local.vm_tsloc_ixpath.clear();
+    local.vm_tsloc_reached.clear(); local.vm_tsloc_err.clear();
+    local.vm_tsloc_loc0.clear(); local.vm_tsloc_loc1.clear();
+    local.vm_tsloc_gx.clear(); local.vm_tsloc_gy.clear(); local.vm_tsloc_gz.clear();
+    local.vm_tsloc_dhit.clear(); local.vm_tsloc_edge.clear(); local.vm_tsloc_cell.clear();
 
     const double nan = b0trk::quietNaN();
     local.m_ts.clear(nan);
@@ -1927,11 +2049,14 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         int station = -1;
         double x = 0.0, y = 0.0, z = 0.0;
         bool selPrimary = false;
+        int mcIndex = -1;
+        std::uint32_t mcCollectionID = 0;
     };
     std::vector<B0TruthHit> b0TruthHits;
     for (std::size_t ih = 0; ih < local.vm_xT.size(); ++ih) {
         if (ih >= local.vm_station.size() || ih >= local.vm_isSelPrimary.size() ||
-            ih >= local.vm_yT.size() || ih >= local.vm_zT.size()) {
+            ih >= local.vm_yT.size() || ih >= local.vm_zT.size() ||
+            ih >= local.vm_mcIndex.size() || ih >= local.vm_mcCollectionID.size()) {
             break;
         }
         const int st = local.vm_station[ih];
@@ -1939,12 +2064,159 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             continue;
         }
         b0TruthHits.push_back({st, local.vm_xT[ih], local.vm_yT[ih], local.vm_zT[ih],
-                               local.vm_isSelPrimary[ih] == 1});
+                               local.vm_isSelPrimary[ih] == 1, local.vm_mcIndex[ih],
+                               local.vm_mcCollectionID[ih]});
     }
     auto unfGeoProvider = m_actsGeoProvider ? m_actsGeoProvider
                                             : (m_actsGeoSvc ? m_actsGeoSvc->actsGeoProvider() : nullptr);
     const auto* unfGeoCtx =
         unfGeoProvider ? &unfGeoProvider->getActsGeometryContext() : nullptr;
+    // Shared per-state row fill for the unfiltered candidate dumps (schemas
+    // 5-7). chain: 0 = stub-seeded, 1 = truth-seeded. (rowMcIdx, rowMcCol)
+    // identify the row's particle; truth residuals anchor on the selected
+    // primary for stub rows and on the row's own particle for truth-seeded
+    // rows, via (tgtMcIdx, tgtMcCol).
+    const auto pushUnfRow = [&](const auto& state, int station, bool isOutlier, bool isMeas,
+                                unsigned status, int seedPos, int chain, int rowMcIdx,
+                                std::uint32_t rowMcCol, int tgtMcIdx,
+                                std::uint32_t tgtMcCol) {
+        // Per-state compatibility for the measurement-selection
+        // diagnosis: kind 0 = accepted measurement, 1 = outlier, 2 = hole
+        // (holes carry no calibrated measurement, so their compatibility
+        // fields stay NaN).
+        const int stateKind = isOutlier ? 1 : (isMeas ? 0 : 2);
+        double innov0 = nan, innov1 = nan;
+        b0trk::InnovCompat stateCompat;
+        if (isOutlier || isMeas) {
+            stateCompat = stateInnovCompat(state, innov0, innov1);
+        }
+        local.vm_ckfdiag_unf_seedpos.push_back(seedPos);
+        local.vm_ckfdiag_unf_status.push_back(static_cast<int>(status));
+        local.vm_ckfdiag_unf_station.push_back(station);
+        local.vm_ckfdiag_unf_kind.push_back(stateKind);
+        local.vm_ckfdiag_unf_chi2.push_back(stateCompat.chi2);
+        local.vm_ckfdiag_unf_pull0.push_back(stateCompat.pull0);
+        local.vm_ckfdiag_unf_pull1.push_back(stateCompat.pull1);
+        local.vm_ckfdiag_unf_innov0.push_back(innov0);
+        local.vm_ckfdiag_unf_innov1.push_back(innov1);
+        local.vm_ckfdiag_unf_chain.push_back(chain);
+        local.vm_ckfdiag_unf_mcindex.push_back(rowMcIdx);
+        local.vm_ckfdiag_unf_mccol.push_back(rowMcCol);
+        std::uint64_t geoId = 0;
+        double pgx = nan, pgy = nan, pgz = nan;
+        try {
+            geoId = state.referenceSurface().geometryId().value();
+        } catch (...) {
+        }
+        local.vm_ckfdiag_unf_geoid.push_back(geoId);
+        // Prediction-vs-truth, measurement-vs-truth, and outlier ownership.
+        // Truth SimHits of the target particle at the same station are
+        // projected into the state's surface; the hit nearest the
+        // measurement (or the prediction, when no measurement exists)
+        // anchors the residuals. Holes carry prediction residuals but no
+        // measurement residuals.
+        double pred0 = nan, pred1 = nan, meas0 = nan, meas1 = nan;
+        double dpredT0 = nan, dpredT1 = nan, dmeasT0 = nan, dmeasT1 = nan;
+        double tdistPrim = nan, tdistOther = nan;
+        int nPrimSt = 0, nOthSt = 0;
+        if (unfGeoCtx != nullptr && state.hasPredicted()) {
+            try {
+                const auto pred = state.predicted();
+                pred0 = pred[Acts::eBoundLoc0];
+                pred1 = pred[Acts::eBoundLoc1];
+                const Acts::Vector3 predDir(
+                    std::sin(pred[Acts::eBoundTheta]) * std::cos(pred[Acts::eBoundPhi]),
+                    std::sin(pred[Acts::eBoundTheta]) * std::sin(pred[Acts::eBoundPhi]),
+                    std::cos(pred[Acts::eBoundTheta]));
+                int md = 0;
+                if (state.hasCalibrated()) {
+                    const auto meas = state.effectiveCalibrated();
+                    md = static_cast<int>(state.calibratedSize());
+                    if (md > 0) {
+                        meas0 = meas[0];
+                    }
+                    if (md > 1) {
+                        meas1 = meas[1];
+                    }
+                }
+                const auto& surface = state.referenceSurface();
+                if (std::isfinite(pred0) && std::isfinite(pred1)) {
+                    try {
+                        const Acts::Vector2 lloc(pred0, pred1);
+                        const auto gpos = surface.localToGlobal(*unfGeoCtx, lloc, predDir);
+                        pgx = gpos.x();
+                        pgy = gpos.y();
+                        pgz = gpos.z();
+                    } catch (...) {
+                    }
+                }
+                double bestPrim = std::numeric_limits<double>::infinity();
+                double bestOth  = std::numeric_limits<double>::infinity();
+                for (const auto& thit : b0TruthHits) {
+                    if (thit.station != station) {
+                        continue;
+                    }
+                    const bool isTarget =
+                        (thit.mcIndex == tgtMcIdx && thit.mcCollectionID == tgtMcCol);
+                    if (isTarget) {
+                        ++nPrimSt;
+                    } else {
+                        ++nOthSt;
+                    }
+                    const Acts::Vector3 tpos(thit.x, thit.y, thit.z);
+                    const auto locResult = surface.globalToLocal(*unfGeoCtx, tpos, predDir, 1.0);
+                    if (!locResult.ok()) {
+                        continue;
+                    }
+                    const double t0 = (*locResult)[0];
+                    const double t1 = (*locResult)[1];
+                    // Anchor on the measurement when one exists, else on the
+                    // prediction (hole states).
+                    const double ax0 = std::isfinite(meas0) ? meas0 : pred0;
+                    const double ax1 = (md > 1 && std::isfinite(meas1)) ? meas1 : pred1;
+                    double dm = std::numeric_limits<double>::infinity();
+                    if (std::isfinite(ax0) && std::isfinite(ax1)) {
+                        const double d0 = ax0 - t0;
+                        const double d1 = ax1 - t1;
+                        dm = std::sqrt(d0 * d0 + d1 * d1);
+                    }
+                    if (isTarget) {
+                        if (dm < bestPrim) {
+                            bestPrim  = dm;
+                            dpredT0   = pred0 - t0;
+                            dpredT1   = pred1 - t1;
+                            dmeasT0   = std::isfinite(meas0) ? meas0 - t0 : nan;
+                            dmeasT1   = (md > 1 && std::isfinite(meas1)) ? meas1 - t1 : nan;
+                        }
+                    } else if (dm < bestOth) {
+                        bestOth = dm;
+                    }
+                }
+                if (std::isfinite(bestPrim)) {
+                    tdistPrim = bestPrim;
+                }
+                if (std::isfinite(bestOth)) {
+                    tdistOther = bestOth;
+                }
+            } catch (...) {
+            }
+        }
+        local.vm_ckfdiag_unf_pred0.push_back(pred0);
+        local.vm_ckfdiag_unf_pred1.push_back(pred1);
+        local.vm_ckfdiag_unf_meas0.push_back(meas0);
+        local.vm_ckfdiag_unf_meas1.push_back(meas1);
+        local.vm_ckfdiag_unf_dpred_t0.push_back(dpredT0);
+        local.vm_ckfdiag_unf_dpred_t1.push_back(dpredT1);
+        local.vm_ckfdiag_unf_dmeas_t0.push_back(dmeasT0);
+        local.vm_ckfdiag_unf_dmeas_t1.push_back(dmeasT1);
+        local.vm_ckfdiag_unf_tdist_prim.push_back(tdistPrim);
+        local.vm_ckfdiag_unf_tdist_other.push_back(tdistOther);
+        local.vm_ckfdiag_unf_nprim_st.push_back(nPrimSt);
+        local.vm_ckfdiag_unf_noth_st.push_back(nOthSt);
+        local.vm_ckfdiag_unf_pgx.push_back(pgx);
+        local.vm_ckfdiag_unf_pgy.push_back(pgy);
+        local.vm_ckfdiag_unf_pgz.push_back(pgz);
+    };
     const bool haveCkfActsUnfilt =
         hasCkfActsStatesUnfiltered && hasCkfActsTracksUnfiltered &&
         !ckfActsTrackStatesUnfilt.empty() && ckfActsTrackStatesUnfilt.front() != nullptr &&
@@ -2018,115 +2290,12 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 if (station < 0) {
                     continue;
                 }
-                // Per-state compatibility for the measurement-selection
-                // diagnosis: one row per physics state on a mapped B0
-                // station, for every candidate (accepted and rejected).
-                // kind: 0 = accepted measurement, 1 = outlier, 2 = hole
-                // (holes carry no calibrated measurement, so their
-                // compatibility fields stay NaN).
-                const int stateKind = isOutlier ? 1 : (isMeas ? 0 : 2);
-                double innov0 = nan, innov1 = nan;
-                b0trk::InnovCompat stateCompat;
-                if (isOutlier || isMeas) {
-                    stateCompat = stateInnovCompat(state, innov0, innov1);
-                }
-                local.vm_ckfdiag_unf_seedpos.push_back(static_cast<int>(seedPos));
-                local.vm_ckfdiag_unf_status.push_back(static_cast<int>(cand.status));
-                local.vm_ckfdiag_unf_station.push_back(station);
-                local.vm_ckfdiag_unf_kind.push_back(stateKind);
-                local.vm_ckfdiag_unf_chi2.push_back(stateCompat.chi2);
-                local.vm_ckfdiag_unf_pull0.push_back(stateCompat.pull0);
-                local.vm_ckfdiag_unf_pull1.push_back(stateCompat.pull1);
-                local.vm_ckfdiag_unf_innov0.push_back(innov0);
-                local.vm_ckfdiag_unf_innov1.push_back(innov1);
-                // Schema 6: prediction-vs-truth, measurement-vs-truth, and
-                // outlier ownership. Truth SimHits at the same station are
-                // projected into the state's surface; the selected-primary
-                // hit nearest the measurement anchors the residuals, and the
-                // nearest other-particle hit classifies ownership.
-                // Calibrated states only; holes keep NaNs and zero counts.
-                double pred0 = nan, pred1 = nan, meas0 = nan, meas1 = nan;
-                double dpredT0 = nan, dpredT1 = nan, dmeasT0 = nan, dmeasT1 = nan;
-                double tdistPrim = nan, tdistOther = nan;
-                int nPrimSt = 0, nOthSt = 0;
-                if ((isOutlier || isMeas) && unfGeoCtx != nullptr && state.hasPredicted()) {
-                    try {
-                        const auto pred = state.predicted();
-                        pred0 = pred[Acts::eBoundLoc0];
-                        pred1 = pred[Acts::eBoundLoc1];
-                        const Acts::Vector3 predDir(
-                            std::sin(pred[Acts::eBoundTheta]) * std::cos(pred[Acts::eBoundPhi]),
-                            std::sin(pred[Acts::eBoundTheta]) * std::sin(pred[Acts::eBoundPhi]),
-                            std::cos(pred[Acts::eBoundTheta]));
-                        int md = 0;
-                        if (state.hasCalibrated()) {
-                            const auto meas = state.effectiveCalibrated();
-                            md = static_cast<int>(state.calibratedSize());
-                            if (md > 0) {
-                                meas0 = meas[0];
-                            }
-                            if (md > 1) {
-                                meas1 = meas[1];
-                            }
-                        }
-                        const auto& surface = state.referenceSurface();
-                        double bestPrim = std::numeric_limits<double>::infinity();
-                        double bestOth  = std::numeric_limits<double>::infinity();
-                        for (const auto& thit : b0TruthHits) {
-                            if (thit.station != station) {
-                                continue;
-                            }
-                            if (thit.selPrimary) {
-                                ++nPrimSt;
-                            } else {
-                                ++nOthSt;
-                            }
-                            const Acts::Vector3 tpos(thit.x, thit.y, thit.z);
-                            const auto locResult = surface.globalToLocal(*unfGeoCtx, tpos, predDir, 1.0);
-                            if (!locResult.ok()) {
-                                continue;
-                            }
-                            const double t0 = (*locResult)[0];
-                            const double t1 = (*locResult)[1];
-                            double dm = std::numeric_limits<double>::infinity();
-                            if (std::isfinite(meas0)) {
-                                const double d0 = meas0 - t0;
-                                const double d1 = (md > 1 && std::isfinite(meas1)) ? meas1 - t1 : 0.0;
-                                dm = std::sqrt(d0 * d0 + d1 * d1);
-                            }
-                            if (thit.selPrimary) {
-                                if (dm < bestPrim) {
-                                    bestPrim  = dm;
-                                    dpredT0   = pred0 - t0;
-                                    dpredT1   = pred1 - t1;
-                                    dmeasT0   = std::isfinite(meas0) ? meas0 - t0 : nan;
-                                    dmeasT1   = (md > 1 && std::isfinite(meas1)) ? meas1 - t1 : nan;
-                                }
-                            } else if (dm < bestOth) {
-                                bestOth = dm;
-                            }
-                        }
-                        if (std::isfinite(bestPrim)) {
-                            tdistPrim = bestPrim;
-                        }
-                        if (std::isfinite(bestOth)) {
-                            tdistOther = bestOth;
-                        }
-                    } catch (...) {
-                    }
-                }
-                local.vm_ckfdiag_unf_pred0.push_back(pred0);
-                local.vm_ckfdiag_unf_pred1.push_back(pred1);
-                local.vm_ckfdiag_unf_meas0.push_back(meas0);
-                local.vm_ckfdiag_unf_meas1.push_back(meas1);
-                local.vm_ckfdiag_unf_dpred_t0.push_back(dpredT0);
-                local.vm_ckfdiag_unf_dpred_t1.push_back(dpredT1);
-                local.vm_ckfdiag_unf_dmeas_t0.push_back(dmeasT0);
-                local.vm_ckfdiag_unf_dmeas_t1.push_back(dmeasT1);
-                local.vm_ckfdiag_unf_tdist_prim.push_back(tdistPrim);
-                local.vm_ckfdiag_unf_tdist_other.push_back(tdistOther);
-                local.vm_ckfdiag_unf_nprim_st.push_back(nPrimSt);
-                local.vm_ckfdiag_unf_noth_st.push_back(nOthSt);
+                // One row per physics state on a mapped B0 station, for every
+                // candidate (accepted and rejected); see pushUnfRow.
+                pushUnfRow(state, station, isOutlier, isMeas, cand.status,
+                           static_cast<int>(seedPos), 0, local.m_selPrimaryMcIndex,
+                           local.m_selPrimaryMcCollectionID, local.m_selPrimaryMcIndex,
+                           local.m_selPrimaryMcCollectionID);
                 if (isOutlier) {
                     // Reached but incompatible: counts toward where CKF got,
                     // never toward measurement stations.
@@ -2141,6 +2310,508 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 }
             }
             ckfCandsBySeed[seedPos].push_back(std::move(cand));
+        }
+    }
+    // Truth-seeded unfiltered candidates (schema 7): same per-state rows as
+    // the stub chain (chain = 1), keyed by truth-seed position. Truth
+    // residuals anchor on each row's own MC particle (from the unfiltered
+    // EDM associations), not on the selected primary.
+    // Truth-seed position -> MC particle by kinematics, shared by the
+    // truth-seeded candidate scan and the single-propagation dump below.
+    // TrackParamTruthInit derives each seed from one MC particle without
+    // recording the link; charge and direction survive exactly (only |p| is
+    // smeared), so they identify the particle. Falls back to -1 when
+    // ambiguous or absent.
+    std::vector<std::pair<int, std::uint32_t>> tsSeedMcKin(truthSeeds.size(), {-1, 0});
+    {
+        if (local.vm_truth_seed_p.size() == truthSeeds.size() &&
+            local.vm_truth_seed_theta.size() == truthSeeds.size() &&
+            local.vm_truth_seed_phi.size() == truthSeeds.size() &&
+            local.vm_truth_seed_charge.size() == truthSeeds.size()) {
+            for (std::size_t si = 0; si < truthSeeds.size(); ++si) {
+                const double sp = local.vm_truth_seed_p[si];
+                const double sth = local.vm_truth_seed_theta[si];
+                const double sph = local.vm_truth_seed_phi[si];
+                const int sch = local.vm_truth_seed_charge[si];
+                if (!std::isfinite(sp) || !std::isfinite(sth) || !std::isfinite(sph)) {
+                    continue;
+                }
+                int bestIdx = -1;
+                std::uint32_t bestCol = 0;
+                for (const auto* part : mcparticles) {
+                    if (part == nullptr) {
+                        continue;
+                    }
+                    if (part->getCharge() != static_cast<float>(sch)) {
+                        continue;
+                    }
+                    const auto mom = part->getMomentum();
+                    const double pmag = std::sqrt(mom.x * mom.x + mom.y * mom.y + mom.z * mom.z);
+                    if (!(pmag > 0.0) || std::abs(sp - pmag) / pmag > 0.4) {
+                        continue;
+                    }
+                    const double pth = std::atan2(std::sqrt(mom.x * mom.x + mom.y * mom.y), mom.z);
+                    double dph = std::atan2(mom.y, mom.x) - sph;
+                    while (dph > M_PI) {
+                        dph -= 2.0 * M_PI;
+                    }
+                    while (dph < -M_PI) {
+                        dph += 2.0 * M_PI;
+                    }
+                    if (std::abs(pth - sth) > 1e-6 || std::abs(dph) > 1e-6) {
+                        continue;
+                    }
+                    if (bestIdx >= 0) {
+                        bestIdx = -2; // ambiguous
+                        break;
+                    }
+                    const auto pid = part->id();
+                    bestIdx = pid.index;
+                    bestCol = pid.collectionID;
+                }
+                if (bestIdx >= 0) {
+                    tsSeedMcKin[si] = {bestIdx, bestCol};
+                }
+            }
+        }
+    }
+    const bool haveTsActsUnfilt =
+        hasTsActsStatesUnfiltered && hasTsActsTracksUnfiltered &&
+        !tsActsTrackStatesUnfilt.empty() && tsActsTrackStatesUnfilt.front() != nullptr &&
+        !tsActsTracksUnfilt.empty() && tsActsTracksUnfilt.front() != nullptr;
+    if (haveTsActsUnfilt) {
+        // EDM track id -> truth-seed id, from the unfiltered EDM tracks.
+        std::map<std::pair<std::uint32_t, int>, std::pair<std::uint32_t, int>> tsTrackSeed;
+        for (const auto* edmTrack : tsUnfiltered) {
+            if (edmTrack == nullptr) {
+                continue;
+            }
+            try {
+                const auto objectId  = edmTrack->id();
+                const auto trajectory = edmTrack->getTrajectory();
+                if (!trajectory.isAvailable()) {
+                    continue;
+                }
+                const auto seed = trajectory.getSeed();
+                if (!seed.isAvailable()) {
+                    continue;
+                }
+                const auto seedId = seed.id();
+                tsTrackSeed[{objectId.collectionID, objectId.index}] =
+                    {seedId.collectionID, seedId.index};
+            } catch (...) {
+            }
+        }
+        // Truth-seed id -> MC particle, via the unfiltered associations.
+        // Weights are ~1 for truth-seeded candidates; first entry wins.
+        std::map<std::pair<std::uint32_t, int>, std::pair<int, std::uint32_t>> tsSeedMc;
+        if (hasTsUnfilteredAssocs) {
+            for (const auto* assoc : tsUnfilteredAssocs) {
+                if (assoc == nullptr) {
+                    continue;
+                }
+                try {
+                    const auto rec = assoc->getRec();
+                    const auto sim = assoc->getSim();
+                    if (!rec.isAvailable() || !sim.isAvailable()) {
+                        continue;
+                    }
+                    const auto recId = rec.id();
+                    const auto simId = sim.id();
+                    const auto trackSeed = tsTrackSeed.find({recId.collectionID, recId.index});
+                    if (trackSeed == tsTrackSeed.end()) {
+                        continue;
+                    }
+                    const auto key = trackSeed->second;
+                    if (tsSeedMc.find(key) != tsSeedMc.end()) {
+                        continue;
+                    }
+                    tsSeedMc[key] = {simId.index, simId.collectionID};
+                } catch (...) {
+                }
+            }
+        }
+        Acts::TrackContainer<Acts::ConstVectorTrackContainer,
+                             Acts::ConstVectorMultiTrajectory,
+                             Acts::detail::ConstRefHolder>
+            tsUnfiltContainer(*tsActsTracksUnfilt.front(), *tsActsTrackStatesUnfilt.front());
+        Acts::ConstProxyAccessor<unsigned int> tsUnfiltSeed("seed");
+        Acts::ConstProxyAccessor<unsigned int> tsUnfiltStatus("ckf_status");
+        const auto nTsUnfiltTracks = static_cast<int>(tsUnfiltContainer.size());
+        for (int t = 0; t < nTsUnfiltTracks; ++t) {
+            const auto track = tsUnfiltContainer.getTrack(t);
+            std::size_t seedPos = truthSeeds.size();
+            try {
+                seedPos = static_cast<std::size_t>(tsUnfiltSeed(track));
+            } catch (...) {
+                continue;
+            }
+            if (seedPos >= truthSeeds.size() || truthSeeds[seedPos] == nullptr) {
+                continue;
+            }
+            unsigned status = b0trk::ckfdiag::kAccepted;
+            try {
+                status = tsUnfiltStatus(track);
+            } catch (...) {
+            }
+            // Kinematic truth-seed -> MC match first (covers rejected
+            // candidates with no EDM track); EDM associations as fallback.
+            int mcIndex = tsSeedMcKin[seedPos].first;
+            std::uint32_t mcCol = tsSeedMcKin[seedPos].second;
+            if (mcIndex < 0) {
+                try {
+                    const auto seedId = truthSeeds[seedPos]->id();
+                    const auto found =
+                        tsSeedMc.find({seedId.collectionID, seedId.index});
+                    if (found != tsSeedMc.end()) {
+                        mcIndex = found->second.first;
+                        mcCol   = found->second.second;
+                    }
+                } catch (...) {
+                }
+            }
+            if (track.nTrackStates() == 0) {
+                continue;
+            }
+            for (const auto& state : track.trackStatesReversed()) {
+                if (!state.hasReferenceSurface()) {
+                    continue;
+                }
+                const int typeMask = trackStateTypeMask(state.typeFlags());
+                const bool isOutlier = (typeMask & kStateOutlier) != 0;
+                const bool isMeas = ((typeMask & kStateMeasurement) != 0) && !isOutlier;
+                const bool isHole = ((typeMask & kStateHole) != 0) && !isOutlier;
+                if (!isOutlier && !isMeas && !isHole) {
+                    continue;
+                }
+                const auto surfIt = m_surfaceToSensorIdx.find(
+                    state.referenceSurface().geometryId().value());
+                if (surfIt == m_surfaceToSensorIdx.end()) {
+                    continue;
+                }
+                const int station = m_sensorRefs[surfIt->second].station;
+                if (station < 0) {
+                    continue;
+                }
+                pushUnfRow(state, station, isOutlier, isMeas, status,
+                           static_cast<int>(seedPos), 1, mcIndex, mcCol, mcIndex, mcCol);
+            }
+        }
+    }
+    // Single-propagation diagnostic (schema 9, opt-in via write_propagation):
+    // propagate every selected-primary truth seed from its origin perigee to
+    // each mapped B0 surface with the same propagator construction CKFTracking
+    // uses (EigenStepper + Navigator + MaterialInteractor, same field and
+    // geometry), recording the arrival. No CKF branching or measurement
+    // selection is involved, so a miss here is propagation/navigation, not
+    // seed quality or selector strictness.
+    if (m_writePropagation && hasTruthSeeds && !truthSeeds.empty() && unfGeoProvider != nullptr &&
+        local.vm_truth_seed_loc0.size() == truthSeeds.size() &&
+        local.vm_truth_seed_loc1.size() == truthSeeds.size() &&
+        local.vm_truth_seed_phi.size() == truthSeeds.size() &&
+        local.vm_truth_seed_theta.size() == truthSeeds.size() &&
+        local.vm_truth_seed_qOverP.size() == truthSeeds.size()) {
+        ensurePropSurfaces(unfGeoProvider);
+        // Same construction as CKFTracking: EigenStepper over the shared field
+        // provider, Navigator over the same tracking geometry, material
+        // interaction in the actor list, SurfaceReached as the target aborter.
+        using DiagPropagator = Acts::Propagator<Acts::EigenStepper<>, Acts::Navigator>;
+        using DiagPropOptions = DiagPropagator::template Options<
+            Acts::ActorList<Acts::MaterialInteractor, Acts::EndOfWorldReached>>;
+        auto propLogger = Acts::getDefaultLogger("B0SingleProp", Acts::Logging::WARNING);
+        Acts::Navigator diagNavigator({.trackingGeometry = unfGeoProvider->trackingGeometry()},
+                                       propLogger->cloneWithSuffix("Navigator"));
+        DiagPropagator diagPropagator(Acts::EigenStepper<>(unfGeoProvider->getFieldProvider()),
+                                      std::move(diagNavigator),
+                                      propLogger->cloneWithSuffix("Propagator"));
+        const auto& pgctx = unfGeoProvider->getActsGeometryContext();
+        const auto& pmctx = unfGeoProvider->getActsMagneticFieldContext();
+        auto originPerigee =
+            Acts::Surface::makeShared<Acts::PerigeeSurface>(Acts::Vector3(0., 0., 0.));
+        const int selMc = local.m_selPrimaryMcIndex;
+        const std::uint32_t selMcCol = local.m_selPrimaryMcCollectionID;
+        for (std::size_t si = 0; si < truthSeeds.size(); ++si) {
+            if (tsSeedMcKin[si].first != selMc || tsSeedMcKin[si].second != selMcCol ||
+                selMc < 0) {
+                continue;
+            }
+            Acts::BoundVector startPars = Acts::BoundVector::Zero();
+            startPars[Acts::eBoundLoc0] = local.vm_truth_seed_loc0[si];
+            startPars[Acts::eBoundLoc1] = local.vm_truth_seed_loc1[si];
+            startPars[Acts::eBoundPhi] = local.vm_truth_seed_phi[si];
+            startPars[Acts::eBoundTheta] = local.vm_truth_seed_theta[si];
+            startPars[Acts::eBoundQOverP] = local.vm_truth_seed_qOverP[si];
+            startPars[Acts::eBoundTime] = 0.0;
+            if (!std::isfinite(startPars[Acts::eBoundLoc0]) ||
+                !std::isfinite(startPars[Acts::eBoundPhi]) ||
+                !std::isfinite(startPars[Acts::eBoundTheta]) ||
+                !std::isfinite(startPars[Acts::eBoundQOverP])) {
+                continue;
+            }
+            // All selected-primary truth seeds carry PDG == m_primaryPdg by
+            // construction, so the hypothesis matches the particle propagated.
+            const Acts::ParticleHypothesis hypothesis(
+                static_cast<Acts::PdgParticle>(std::abs(m_primaryPdg)));
+            const Acts::BoundTrackParameters startParams(originPerigee, startPars, std::nullopt,
+                                                         hypothesis);
+            for (const auto* surface : m_propSurfaces) {
+                if (surface == nullptr) {
+                    continue;
+                }
+                const std::uint64_t geoId = surface->geometryId().value();
+                const auto mapIt = m_surfaceToSensorIdx.find(geoId);
+                if (mapIt == m_surfaceToSensorIdx.end()) {
+                    continue;
+                }
+                const int station = m_sensorRefs[mapIt->second].station;
+                DiagPropOptions propOptions(pgctx, pmctx);
+                propOptions.direction = Acts::Direction::Forward();
+                int reached = 0;
+                double loc0 = nan, loc1 = nan, gx = nan, gy = nan, gz = nan;
+                try {
+                    auto result = diagPropagator.template propagate<DiagPropOptions,
+                                                                    Acts::SurfaceReached>(
+                        startParams, *surface, propOptions);
+                    if (result.ok() && result->endParameters.has_value()) {
+                        const auto& end = result->endParameters.value();
+                        if (std::isfinite(end.parameters()[Acts::eBoundLoc0]) &&
+                            std::isfinite(end.parameters()[Acts::eBoundLoc1])) {
+                            reached = 1;
+                            loc0 = end.parameters()[Acts::eBoundLoc0];
+                            loc1 = end.parameters()[Acts::eBoundLoc1];
+                            try {
+                                const Acts::Vector2 lloc(loc0, loc1);
+                                const auto gpos = surface->localToGlobal(
+                                    pgctx, lloc, end.momentum().normalized());
+                                gx = gpos.x();
+                                gy = gpos.y();
+                                gz = gpos.z();
+                            } catch (...) {
+                            }
+                        }
+                    }
+                } catch (...) {
+                }
+                local.vm_tsprop_seedpos.push_back(static_cast<int>(si));
+                local.vm_tsprop_mcindex.push_back(tsSeedMcKin[si].first);
+                local.vm_tsprop_mccol.push_back(tsSeedMcKin[si].second);
+                local.vm_tsprop_station.push_back(station);
+                local.vm_tsprop_geoid.push_back(geoId);
+                local.vm_tsprop_reached.push_back(reached);
+                local.vm_tsprop_loc0.push_back(loc0);
+                local.vm_tsprop_loc1.push_back(loc1);
+                local.vm_tsprop_gx.push_back(gx);
+                local.vm_tsprop_gy.push_back(gy);
+                local.vm_tsprop_gz.push_back(gz);
+            }
+        }
+    }
+    // SimHit-anchored local propagation (schema 10, opt-in via
+    // write_local_propagation). Test 0 starts epsilon-upstream of each
+    // selected-primary SimHit and targets that hit's own ACTS surface;
+    // test 1 starts at the hit position and targets every mapped surface of
+    // the next station. Each row records the bounded straight-ray
+    // intersection (BoundaryTolerance::None) crossed with the
+    // SurfaceReached propagation, plus the truth hit's distance to its
+    // sensor edge, so the four-way table (fine / target bug /
+    // bounds-mapping / inconsistent) separates mean-vs-stochastic
+    // trajectory divergence from genuine navigation failures.
+    if (m_writeLocal && unfGeoProvider != nullptr && !local.vm_xT.empty()) {
+        ensurePropSurfaces(unfGeoProvider);
+        using DiagPropagator = Acts::Propagator<Acts::EigenStepper<>, Acts::Navigator>;
+        using DiagPropOptions = DiagPropagator::template Options<
+            Acts::ActorList<Acts::MaterialInteractor, Acts::EndOfWorldReached>>;
+        auto locLogger = Acts::getDefaultLogger("B0LocalProp", Acts::Logging::WARNING);
+        Acts::Navigator locNavigator({.trackingGeometry = unfGeoProvider->trackingGeometry()},
+                                      locLogger->cloneWithSuffix("Navigator"));
+        DiagPropagator locPropagator(Acts::EigenStepper<>(unfGeoProvider->getFieldProvider()),
+                                     std::move(locNavigator),
+                                     locLogger->cloneWithSuffix("Propagator"));
+        const auto& lgctx = unfGeoProvider->getActsGeometryContext();
+        const auto& lmctx = unfGeoProvider->getActsMagneticFieldContext();
+        const double eps = (m_localEpsilon > 0.0 && std::isfinite(m_localEpsilon))
+                               ? m_localEpsilon : 2.0;
+        const Acts::ParticleHypothesis localHypo(
+            static_cast<Acts::PdgParticle>(std::abs(m_primaryPdg)));
+        const auto pushLocalRow = [&](int test, std::size_t hitIdx, int hitStation,
+                                      int tgtStation, const Acts::Surface* target,
+                                      const Acts::Vector3& x0, const Acts::Vector3& dir,
+                                      double qop, double time, const Acts::Vector3& hitPos) {
+            int ixvalid = 0;
+            double ixpath = nan;
+            try {
+                const auto ix = target
+                                    ->intersect(lgctx, x0, dir, Acts::BoundaryTolerance::None())
+                                    .closest();
+                if (ix.status() == Acts::IntersectionStatus::reachable ||
+                    ix.status() == Acts::IntersectionStatus::onSurface) {
+                    ixvalid = 1;
+                    ixpath = ix.pathLength();
+                }
+            } catch (...) {
+            }
+            double edge = nan;
+            try {
+                const auto loc = target->globalToLocal(lgctx, hitPos, dir);
+                if (loc.ok()) {
+                    const auto* rect =
+                        dynamic_cast<const Acts::RectangleBounds*>(&target->bounds());
+                    if (rect != nullptr) {
+                        const double ex = rect->halfLengthX() - std::abs((*loc)[0]);
+                        const double ey = rect->halfLengthY() - std::abs((*loc)[1]);
+                        edge = std::min(ex, ey);
+                    }
+                }
+            } catch (...) {
+            }
+            int reached = 0;
+            int errCode = 0;
+            double loc0 = nan, loc1 = nan, gx = nan, gy = nan, gz = nan;
+            try {
+                // Perigee centered at the start point: the ray passes through
+                // it, so d0 = z0 = 0 (same construction as the IP perigee in
+                // schema 9; CurvilinearSurface is not a Surface in ACTS 47).
+                auto startSurf = Acts::Surface::makeShared<Acts::PerigeeSurface>(x0);
+                Acts::BoundVector pars = Acts::BoundVector::Zero();
+                pars[Acts::eBoundPhi] = std::atan2(dir.y(), dir.x());
+                pars[Acts::eBoundTheta] = std::acos(std::clamp(dir.z(), -1.0, 1.0));
+                pars[Acts::eBoundQOverP] = qop;
+                pars[Acts::eBoundTime] = time;
+                const Acts::BoundTrackParameters start(startSurf, pars, std::nullopt,
+                                                       localHypo);
+                DiagPropOptions opts(lgctx, lmctx);
+                opts.direction = Acts::Direction::Forward();
+                auto res = locPropagator.template propagate<DiagPropOptions,
+                                                             Acts::SurfaceReached>(
+                    start, *target, opts);
+                if (!res.ok()) {
+                    // value is ambiguous across categories (all start at 1),
+                    // so fold the category in: 1 propagator, 2 navigator,
+                    // 3 stepper, 5 surface, 6 magnetic field, 7 portal,
+                    // 4 anything else.
+                    const auto& ec = res.error();
+                    int cat = 4;
+                    if (ec.category() ==
+                        std::error_code(Acts::PropagatorError::Failure).category()) {
+                        cat = 1;
+                    } else if (ec.category() ==
+                               std::error_code(Acts::NavigatorError::NotInsideExpectedVolume)
+                                   .category()) {
+                        cat = 2;
+                    } else if (ec.category() ==
+                               std::error_code(Acts::EigenStepperError::StepSizeStalled)
+                                   .category()) {
+                        cat = 3;
+                    } else if (ec.category() ==
+                               std::error_code(Acts::SurfaceError::GlobalPositionNotOnSurface)
+                                   .category()) {
+                        cat = 5;
+                    } else if (ec.category() ==
+                               std::error_code(Acts::MagneticFieldError::OutOfBounds)
+                                   .category()) {
+                        cat = 6;
+                    } else if (ec.category() ==
+                               std::error_code(Acts::PortalError::PositionNotOnAnyChildPortalLink)
+                                   .category()) {
+                        cat = 7;
+                    }
+                    errCode = 100 * cat + ec.value();
+                } else if (res->endParameters.has_value()) {
+                    const auto& end = res->endParameters.value();
+                    if (std::isfinite(end.parameters()[Acts::eBoundLoc0]) &&
+                        std::isfinite(end.parameters()[Acts::eBoundLoc1])) {
+                        reached = 1;
+                        loc0 = end.parameters()[Acts::eBoundLoc0];
+                        loc1 = end.parameters()[Acts::eBoundLoc1];
+                        try {
+                            const Acts::Vector2 lloc(loc0, loc1);
+                            const auto gpos = target->localToGlobal(
+                                lgctx, lloc, end.momentum().normalized());
+                            gx = gpos.x();
+                            gy = gpos.y();
+                            gz = gpos.z();
+                        } catch (...) {
+                        }
+                    }
+                }
+            } catch (...) {
+            }
+            double dhit = nan;
+            if (reached == 1 && std::isfinite(gx)) {
+                const double dx = gx - hitPos.x();
+                const double dy = gy - hitPos.y();
+                const double dz = gz - hitPos.z();
+                dhit = std::sqrt(dx * dx + dy * dy + dz * dz);
+            }
+            local.vm_tsloc_test.push_back(test);
+            local.vm_tsloc_hitidx.push_back(static_cast<int>(hitIdx));
+            local.vm_tsloc_hitstation.push_back(hitStation);
+            local.vm_tsloc_tgtstation.push_back(tgtStation);
+            local.vm_tsloc_geoid.push_back(target->geometryId().value());
+            local.vm_tsloc_epsilon.push_back(test == 0 ? eps : 0.0);
+            local.vm_tsloc_ixvalid.push_back(ixvalid);
+            local.vm_tsloc_ixpath.push_back(ixpath);
+            local.vm_tsloc_reached.push_back(reached);
+            local.vm_tsloc_err.push_back(errCode);
+            local.vm_tsloc_loc0.push_back(loc0);
+            local.vm_tsloc_loc1.push_back(loc1);
+            local.vm_tsloc_gx.push_back(gx);
+            local.vm_tsloc_gy.push_back(gy);
+            local.vm_tsloc_gz.push_back(gz);
+            local.vm_tsloc_dhit.push_back(dhit);
+            local.vm_tsloc_edge.push_back(edge);
+            local.vm_tsloc_cell.push_back(
+                b0trk::tsloc::classifyLocal(ixvalid == 1, reached == 1));
+        };
+        for (std::size_t ih = 0; ih < local.vm_xT.size(); ++ih) {
+            if (ih >= local.vm_yT.size() || ih >= local.vm_zT.size() ||
+                ih >= local.vm_px.size() || ih >= local.vm_py.size() ||
+                ih >= local.vm_pz.size() || ih >= local.vm_station.size() ||
+                ih >= local.vm_isSelPrimary.size() || ih >= local.vm_pdg.size() ||
+                ih >= local.vm_time.size() || ih >= local.vm_plane.size() ||
+                ih >= local.vm_module.size() || ih >= local.vm_sensor.size()) {
+                break;
+            }
+            if (local.vm_isSelPrimary[ih] != 1) {
+                continue;
+            }
+            const Acts::Vector3 xhit(local.vm_xT[ih], local.vm_yT[ih], local.vm_zT[ih]);
+            const Acts::Vector3 phit(local.vm_px[ih], local.vm_py[ih], local.vm_pz[ih]);
+            const double pmag = phit.norm();
+            const int station = local.vm_station[ih];
+            if (!std::isfinite(xhit.x()) || !std::isfinite(phit.z()) || pmag <= 0.0 ||
+                !std::isfinite(pmag) || station < 0) {
+                continue;
+            }
+            const int charge = b0trk::tsloc::chargeFromPdg(local.vm_pdg[ih]);
+            if (charge == 0) {
+                continue;
+            }
+            const Acts::Vector3 dir = phit / pmag;
+            const double qop = static_cast<double>(charge) / pmag;
+            const double time = local.vm_time[ih];
+            const auto key = std::make_tuple(local.vm_plane[ih], local.vm_module[ih],
+                                             local.vm_sensor[ih]);
+            const auto sit = m_sensorSurface.find(key);
+            if (sit != m_sensorSurface.end() && sit->second != nullptr) {
+                pushLocalRow(0, ih, station, station, sit->second, xhit - eps * dir, dir,
+                             qop, time, xhit);
+                // Test 2: start exactly at the hit (inside the sensor volume,
+                // no boundary crossing) targeting the same surface. If test 0
+                // misses while test 2 reaches, the killer is the en-route
+                // volume-boundary/portal crossing, not the surface itself.
+                pushLocalRow(2, ih, station, station, sit->second, xhit, dir, qop,
+                             time, xhit);
+            }
+            for (std::size_t s = 0; s < m_propSurfaces.size(); ++s) {
+                if (s >= m_propSurfaceStation.size() ||
+                    m_propSurfaceStation[s] != station + 1 ||
+                    m_propSurfaces[s] == nullptr) {
+                    continue;
+                }
+                pushLocalRow(1, ih, station, station + 1, m_propSurfaces[s], xhit, dir,
+                             qop, time, xhit);
+            }
         }
     }
     // Geometry-defined station bound from the sensor map (validated at init),
@@ -2973,6 +3644,9 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         swap(this->vm_raw_nContribMc, local.vm_raw_nContribMc);
         swap(this->m_hasTsActsStates, local.m_hasTsActsStates);
         swap(this->m_hasTsActsTracks, local.m_hasTsActsTracks);
+        swap(this->m_hasTsUnfilteredAssocs, local.m_hasTsUnfilteredAssocs);
+        swap(this->m_hasTsActsStatesUnfiltered, local.m_hasTsActsStatesUnfiltered);
+        swap(this->m_hasTsActsTracksUnfiltered, local.m_hasTsActsTracksUnfiltered);
         swap(this->vm_truth_seed_phi, local.vm_truth_seed_phi);
         swap(this->m_nSensorMapExact, local.m_nSensorMapExact);
         swap(this->vm_seed_sigma_phi, local.vm_seed_sigma_phi);
@@ -3216,6 +3890,42 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         swap(this->vm_ckfdiag_unf_tdist_other, local.vm_ckfdiag_unf_tdist_other);
         swap(this->vm_ckfdiag_unf_nprim_st, local.vm_ckfdiag_unf_nprim_st);
         swap(this->vm_ckfdiag_unf_noth_st, local.vm_ckfdiag_unf_noth_st);
+        swap(this->vm_ckfdiag_unf_chain, local.vm_ckfdiag_unf_chain);
+        swap(this->vm_ckfdiag_unf_mcindex, local.vm_ckfdiag_unf_mcindex);
+        swap(this->vm_ckfdiag_unf_mccol, local.vm_ckfdiag_unf_mccol);
+        swap(this->vm_ckfdiag_unf_geoid, local.vm_ckfdiag_unf_geoid);
+        swap(this->vm_ckfdiag_unf_pgx, local.vm_ckfdiag_unf_pgx);
+        swap(this->vm_ckfdiag_unf_pgy, local.vm_ckfdiag_unf_pgy);
+        swap(this->vm_ckfdiag_unf_pgz, local.vm_ckfdiag_unf_pgz);
+        swap(this->vm_tsprop_seedpos, local.vm_tsprop_seedpos);
+        swap(this->vm_tsprop_mcindex, local.vm_tsprop_mcindex);
+        swap(this->vm_tsprop_mccol, local.vm_tsprop_mccol);
+        swap(this->vm_tsprop_station, local.vm_tsprop_station);
+        swap(this->vm_tsprop_geoid, local.vm_tsprop_geoid);
+        swap(this->vm_tsprop_reached, local.vm_tsprop_reached);
+        swap(this->vm_tsprop_loc0, local.vm_tsprop_loc0);
+        swap(this->vm_tsprop_loc1, local.vm_tsprop_loc1);
+        swap(this->vm_tsprop_gx, local.vm_tsprop_gx);
+        swap(this->vm_tsprop_gy, local.vm_tsprop_gy);
+        swap(this->vm_tsprop_gz, local.vm_tsprop_gz);
+        swap(this->vm_tsloc_test, local.vm_tsloc_test);
+        swap(this->vm_tsloc_hitidx, local.vm_tsloc_hitidx);
+        swap(this->vm_tsloc_hitstation, local.vm_tsloc_hitstation);
+        swap(this->vm_tsloc_tgtstation, local.vm_tsloc_tgtstation);
+        swap(this->vm_tsloc_geoid, local.vm_tsloc_geoid);
+        swap(this->vm_tsloc_epsilon, local.vm_tsloc_epsilon);
+        swap(this->vm_tsloc_ixvalid, local.vm_tsloc_ixvalid);
+        swap(this->vm_tsloc_ixpath, local.vm_tsloc_ixpath);
+        swap(this->vm_tsloc_reached, local.vm_tsloc_reached);
+        swap(this->vm_tsloc_err, local.vm_tsloc_err);
+        swap(this->vm_tsloc_loc0, local.vm_tsloc_loc0);
+        swap(this->vm_tsloc_loc1, local.vm_tsloc_loc1);
+        swap(this->vm_tsloc_gx, local.vm_tsloc_gx);
+        swap(this->vm_tsloc_gy, local.vm_tsloc_gy);
+        swap(this->vm_tsloc_gz, local.vm_tsloc_gz);
+        swap(this->vm_tsloc_dhit, local.vm_tsloc_dhit);
+        swap(this->vm_tsloc_edge, local.vm_tsloc_edge);
+        swap(this->vm_tsloc_cell, local.vm_tsloc_cell);
         swap(this->m_hasCkfActsStatesUnfiltered, local.m_hasCkfActsStatesUnfiltered);
         swap(this->m_hasCkfActsTracksUnfiltered, local.m_hasCkfActsTracksUnfiltered);
         m_tree->Fill();

@@ -10,7 +10,7 @@
 
 namespace b0trk {
 
-inline constexpr int kSchemaVersion = 6;
+inline constexpr int kSchemaVersion = 10;
 
 inline constexpr int kMapUnresolved = 0;
 inline constexpr int kMapExact      = 1;
@@ -182,6 +182,44 @@ inline InnovCompat innovCompat(int measDim, double r0, double r1, double v00, do
     }
     return out;
 }
+
+// Local single-propagation cells (schema 10): a bounded straight-ray
+// intersection (BoundaryTolerance::None) crossed with the SurfaceReached
+// propagation from a few mm upstream of a SimTrackerHit.
+namespace tsloc {
+
+inline constexpr int kLocalOk = 0;             // propagation reached
+inline constexpr int kLocalTargetBug = 1;      // ray hits finite surface, propagation misses
+inline constexpr int kLocalBoundsMapping = 2;  // ray misses finite surface, propagation misses
+inline constexpr int kLocalInconsistent = 3;   // ray misses, propagation reaches
+
+inline int classifyLocal(bool ixReachable, bool propReached) {
+    if (propReached) {
+        return ixReachable ? kLocalOk : kLocalInconsistent;
+    }
+    return ixReachable ? kLocalTargetBug : kLocalBoundsMapping;
+}
+
+// Charge numerator for common PDGs; 0 = neutral or unknown.
+inline int chargeFromPdg(int pdg) {
+    const int a = (pdg < 0) ? -pdg : pdg;
+    int q = 0;
+    if (a == 11 || a == 13) {
+        q = -1;
+    } else if (a == 211 || a == 321 || a == 2212) {
+        q = +1;
+    } else if (a == 2112 || a == 22) {
+        q = 0;
+    } else {
+        return 0;
+    }
+    if (pdg < 0 && q != 0) {
+        q = -q;
+    }
+    return q;
+}
+
+} // namespace tsloc
 
 // Layer DetElement names:
 //   B0Tracker_layer{station}_{front|back}_P  (realistic)
