@@ -1,4 +1,6 @@
 **/build
 build_*
 **/calibrations
-**/fieldmaps
+**/fieldmaps__pycache__/
+*.pyc
+build-helpers/
