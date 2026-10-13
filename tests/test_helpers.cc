@@ -77,6 +77,29 @@ int main() {
         CHECK(st == 3);
         CHECK(side == -1);
     }
+    // Realistic geometry (eic/epic b0-realistic-geometry): faces are named by
+    // station, so station and side must not depend on the layer-id parity.
+    {
+        const auto [st, side] = parseLayerName("B0Tracker_station1_back_P");
+        CHECK(st == 1);
+        CHECK(side == 0);
+    }
+    {
+        const auto [st, side] = parseLayerName("B0Tracker_station4_front_P");
+        CHECK(st == 4);
+        CHECK(side == 1);
+    }
+    {
+        const auto [st, side] = parseLayerName("B0Tracker_station12_front_P");
+        CHECK(st == 12);
+        CHECK(side == 1);
+    }
+    {
+        // ACTS guard layers carry no station.
+        const auto [st, side] = parseLayerName("B0Tracker_guard_upstream_P");
+        CHECK(st == -1);
+        CHECK(side == -1);
+    }
     {
         const auto [st, side] = parseLayerName("not_a_layer");
         CHECK(st == -1);

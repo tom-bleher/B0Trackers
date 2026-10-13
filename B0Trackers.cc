@@ -846,6 +846,12 @@ void B0Trackers::Init() {
         return static_cast<std::uint64_t>(refCellID);
     };
 
+    struct LayerInfo {
+        int station;
+        int side;
+        std::string name;
+    };
+    std::map<int, LayerInfo> layerTable;
     for (const auto& [layerName, layerDE] : b0Det.children()) {
         const auto layer_pv = layerDE.placement();
         if (!layer_pv.isValid()) continue;
@@ -860,6 +866,7 @@ void B0Trackers::Init() {
             ? nameStation
             : b0trk::stationFromLayerId(layer_id, nameSide >= 0);
         m_layerToStation[layer_id] = station;
+        layerTable[layer_id] = {station, nameSide, layerName};
 
         int layerSide = nameSide;
         for (const auto& [modName, modDE] : layerDE.children()) {
@@ -886,6 +893,26 @@ void B0Trackers::Init() {
                 m_sensorRefs.push_back({refCellID, layer_id, module_id, side, sensor_id, station, sensorDE});
             }
         }
+    }
+
+    // Station and side are what every per-station quantity is keyed on, so a
+    // naming change in the geometry must fail here rather than silently turn
+    // each face into its own "station".
+    {
+        std::map<std::pair<int, int>, int> layerByStationSide;
+        std::string table;
+        for (const auto& [layer_id, info] : layerTable) {
+            table += " " + std::to_string(layer_id) + "->S" + std::to_string(info.station) +
+                     (info.side == 1 ? "F" : info.side == 0 ? "B" : "");
+            const auto [it, inserted] =
+                layerByStationSide.emplace(std::make_pair(info.station, info.side), layer_id);
+            if (!inserted) {
+                throw JException("B0Trackers: layers %d and %d both map to station %d side %d "
+                                 "(layer DetElement '%s'); check the B0 face naming",
+                                 it->second, layer_id, info.station, info.side, info.name.c_str());
+            }
+        }
+        m_log->info("layer -> station/side:{}", table);
     }
 
     if (m_actsGeoProvider) {

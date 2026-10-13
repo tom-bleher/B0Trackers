@@ -2,6 +2,7 @@
 
 #include <cctype>
 #include <cmath>
+#include <initializer_list>
 #include <limits>
 #include <string>
 #include <utility>
@@ -222,16 +223,24 @@ inline int chargeFromPdg(int pdg) {
 } // namespace tsloc
 
 // Layer DetElement names:
-//   B0Tracker_layer{station}_{front|back}_P  (realistic)
-//   B0Tracker_layer{N}_P                     (official; N is the station)
-// Returns {station, side} with side 1=front, 0=back, -1=unknown.
+//   B0Tracker_station{N}_{front|back}_P  (realistic, eic/epic b0-realistic-geometry)
+//   B0Tracker_layer{N}_{front|back}_P    (earlier realistic prototypes)
+//   B0Tracker_layer{N}_P                 (official; N is the station)
+// Returns {station, side} with side 1=front, 0=back, -1=unknown. The side
+// comes from the name, never from the cellID layer parity, because which face
+// gets the odd layer id is a geometry convention that has changed before.
 inline std::pair<int, int> parseLayerName(const std::string& name) {
-    const auto pos = name.find("layer");
-    if (pos == std::string::npos || pos + 5 >= name.size()) {
-        return {-1, -1};
+    std::size_t i = std::string::npos;
+    for (const char* token : {"station", "layer"}) {
+        const auto pos = name.find(token);
+        const std::size_t len = std::char_traits<char>::length(token);
+        if (pos != std::string::npos && pos + len < name.size() &&
+            std::isdigit(static_cast<unsigned char>(name[pos + len]))) {
+            i = pos + len;
+            break;
+        }
     }
-    std::size_t i = pos + 5;
-    if (!std::isdigit(static_cast<unsigned char>(name[i]))) {
+    if (i == std::string::npos) {
         return {-1, -1};
     }
     int n = 0;
