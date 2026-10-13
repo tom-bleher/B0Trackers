@@ -1,3 +1,4 @@
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -241,6 +242,127 @@ class B0ReportIntegrationTest(unittest.TestCase):
             self.assertEqual(innovation["truth_matched_track"]["chi2"]["n"], 2)
             self.assertIn("1", innovation["by_station_truth_matched"])
             self.assertIn("2", innovation["by_station_truth_matched"])
+
+    def _schema11_branches(self):
+        # Beam proton along the ion axis, rotated by the 25 mrad crossing angle
+        # in the x-z plane. Every selected primary scatters by 10 mrad towards
+        # +y around that axis: beam-frame phi = +pi/2, lab phi close to pi.
+        angle = -0.025
+        bx, bz = 100.0 * math.sin(angle), 100.0 * math.cos(angle)
+        p = 100.0
+        px = p * math.cos(0.010) * math.sin(angle)
+        py = p * math.sin(0.010)
+        pz = p * math.cos(0.010) * math.cos(angle)
+        return {
+            "schema_version": np.array([11, 11, 11], dtype=np.int32),
+            "geometry_name": ak.Array(["toy-face", "toy-face", "toy-face"]),
+            "detector_path": ak.Array(["/toy/epic", "/toy/epic", "/toy/epic"]),
+            "station": ak.Array([[1, 1, 2, 2], [1, 2], []]),
+            "plane": ak.Array([[1, 2, 3, 4], [1, 3], []]),
+            "n_stations_primary": np.array([4, 4, 4], dtype=np.int32),
+            "n_stub_seeds": np.array([2, 1, 0], dtype=np.int32),
+            "n_ckf_unfiltered": np.array([1, 1, 0], dtype=np.int32),
+            "n_ckf_filtered": np.array([1, 1, 0], dtype=np.int32),
+            "ckf_truth_matched_trk_index": np.array([0, 0, -1], dtype=np.int32),
+            # Event 1's "truth match" is only 40% primary: not efficient at 0.5.
+            "ckf_truth_matched_trk_assoc_weight": np.array([1.0, 0.4, np.nan]),
+            "sel_primary_p": np.array([p, p, 150.0]),
+            "sel_primary_px": np.array([px, px, px]),
+            "sel_primary_py": np.array([py, py, py]),
+            "sel_primary_pz": np.array([pz, pz, pz]),
+            "sel_primary_thscat_mrad": np.array([10.0, 10.0, np.nan]),
+            "sel_primary_mcIndex": np.array([7, 8, 9], dtype=np.int32),
+            "sel_primary_mcCollectionID": np.array([1, 1, 1], dtype=np.uint32),
+            "beam_proton_px": ak.Array([[bx], [bx], [bx]]),
+            "beam_proton_py": ak.Array([[0.0], [0.0], [0.0]]),
+            "beam_proton_pz": ak.Array([[bz], [bz], [bz]]),
+            "ckf_truth_matched_trk_delta_p": np.array([0.2, 0.3, np.nan]),
+            "ckf_truth_matched_trk_pull_qOverP": np.array([0.5, 0.1, np.nan]),
+            "ckf_truth_matched_trk_pull_theta": np.array([-0.2, 0.1, np.nan]),
+            "ckf_truth_matched_trk_pull_phi": np.array([0.1, 0.1, np.nan]),
+            "has_stub_seeds": np.array([True, True, True]),
+            "has_ckf_tracks_unfiltered": np.array([True, True, True]),
+            "has_ckf_tracks": np.array([True, True, True]),
+            "has_ckf_assocs": np.array([True, True, True]),
+            "has_ckf_assocs_unfiltered": np.array([True, True, True]),
+            "seed_made_unfiltered_track": ak.Array([[1, 0], [1], []]),
+            "seed_survived_ambiguity": ak.Array([[1, -1], [0], []]),
+            "seed_assoc_mcIndex": ak.Array([[7, 3], [8], []]),
+            "seed_assoc_mcCollectionID": ak.Array([[1, 1], [1], []]),
+            "ckf_trk_state_resid_loc0": ak.Array([[0.01, -0.02], [0.03], []]),
+            "ckf_trk_state_resid_loc1": ak.Array([[0.02, 0.01], [-0.01], []]),
+            "ckf_trk_state_type": ak.Array([[1, 1], [1], []]),
+            "ckf_trk_state_estimate_kind": ak.Array([[3, 3], [2], []]),
+            "ckf_trk_aclgad_station": ak.Array([[1, 1], [2], []]),
+            "ckf_trk_aclgad_side": ak.Array([[0, 1], [0], []]),
+            "ckf_trk_state_track_index": ak.Array([[0, 0], [0], []]),
+            "ckf_trk_state_mapping_method": ak.Array([[1, 1], [1], []]),
+            "ckf_trk_assoc_mcIndex": ak.Array([[7], [8], []]),
+            "ckf_trk_assoc_mcCollectionID": ak.Array([[1], [1], []]),
+            "ckf_trk_assoc_weight": ak.Array([[1.0], [0.4], []]),
+            "n_simhits_unresolved_cellid": np.array([0, 0, 0], dtype=np.int32),
+            "n_missing_mc_relation": np.array([0, 0, 0], dtype=np.int32),
+            "n_pixel_snap_failed": np.array([0, 0, 0], dtype=np.int32),
+        }
+
+    def _report(self, tmp, branches):
+        root_path = tmp / "toy.root"
+        with uproot.recreate(root_path) as root:
+            root["B0Trackers/hits"] = branches
+        return build_report(
+            root_path,
+            "B0Trackers/hits",
+            3,
+            False,
+            tmp / "report",
+            momentum_bins=[0.0, 120.0],
+            angle_bins_mrad=[0.0, 30.0],
+            phi_bins_rad=[-math.pi, 0.0, math.pi],
+            min_truth_weight=0.5,
+        )
+
+    def test_schema11_truth_match_threshold_is_shared(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self._report(Path(tmp), self._schema11_branches())
+            # The 0.4-weight track is a fake, so it must not also be efficient.
+            efficiency = report["event_stage_presence"]["truth_matched_over_eligible"]
+            self.assertEqual((efficiency["numerator"], efficiency["denominator"]), (1, 3))
+            self.assertEqual(report["selection"]["truth_match_min_weight"], 0.5)
+            self.assertIn("Wilson", report["selection"]["efficiency_interval"])
+
+    def test_schema11_phi_is_beam_relative_and_overflow_is_counted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self._report(Path(tmp), self._schema11_branches())
+            truth = report["truth_matched"]
+            self.assertTrue(truth["phi_frame"].startswith("beam"))
+            self.assertAlmostEqual(truth["phi"]["median"], math.pi / 2, places=3)
+            self.assertEqual(truth["out_of_range"]["truth_p_GeV"]["overflow"], 1)
+            self.assertEqual(truth["out_of_range"]["scattering_angle_mrad"]["nonfinite"], 1)
+            self.assertEqual(report["provenance"]["detector_paths"], ["/toy/epic"])
+
+    def test_schema11_residuals_by_face_and_primary_seeds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self._report(Path(tmp), self._schema11_branches())
+            residuals = report["measurement_residuals_by_station"]
+            self.assertEqual(set(residuals["all_stub_ckf_tracks_by_face"]), {"S1B", "S1F", "S2B"})
+            self.assertEqual(
+                residuals["estimate_kind_of_measurement_states"], {"filtered": 1, "smoothed": 2}
+            )
+            primary = report["seed_survival"]["selected_primary_seeds"]
+            self.assertEqual(primary["seeds"], 2)
+            self.assertEqual(primary["made_unfiltered"]["numerator"], 2)
+            self.assertEqual(primary["survived_ambiguity_given_ckf"]["numerator"], 1)
+
+    def test_refuses_pre_schema11_per_face_station_numbering(self):
+        branches = self._schema11_branches()
+        branches["schema_version"] = np.array([10, 10, 10], dtype=np.int32)
+        # Before schema 11 the realistic geometry wrote station = cellID layer.
+        branches["station"] = ak.Array([[1, 2, 7, 8], [1, 3], []])
+        branches["plane"] = ak.Array([[1, 2, 7, 8], [1, 3], []])
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(SystemExit) as raised:
+                self._report(Path(tmp), branches)
+            self.assertIn("schema >= 11", str(raised.exception))
 
 
 if __name__ == "__main__":

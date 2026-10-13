@@ -33,6 +33,31 @@ def git_commit(path: Path | None) -> str | None:
         return None
 
 
+def git_dirty(path: Path | None) -> bool | None:
+    """True when the checkout has uncommitted or untracked changes: its HEAD
+    then does not describe the code that ran."""
+    if path is None:
+        return None
+    try:
+        status = subprocess.run(
+            ["git", "-C", str(path), "status", "--porcelain"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return bool(status.strip())
+
+
+def command_output(command: list[str]) -> str:
+    try:
+        result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return ""
+    return result.stdout.strip()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True, help="simulation/reconstruction input file")
@@ -63,8 +88,15 @@ def main() -> int:
         "detector_config": os.environ.get("DETECTOR_CONFIG", ""),
         "detector_path": os.environ.get("DETECTOR_PATH", ""),
         "b0trackers_commit": git_commit(args.b0trackers_repo),
+        "b0trackers_dirty": git_dirty(args.b0trackers_repo),
         "eicrecon_commit": git_commit(args.eicrecon_repo),
+        "eicrecon_dirty": git_dirty(args.eicrecon_repo),
+        "eicrecon_version": command_output(["eicrecon", "-v"]),
         "epic_commit": git_commit(args.epic_repo),
+        "epic_dirty": git_dirty(args.epic_repo),
+        # The software stack: eic-shell exports the image path into the container.
+        "container_image": os.environ.get("APPTAINER_CONTAINER")
+        or os.environ.get("SINGULARITY_CONTAINER", ""),
         "material_map_path": str(args.material_map.resolve()) if args.material_map else "",
         "material_map_sha256": sha256(args.material_map) if args.material_map else "",
         "reconstruction_args": args.arg,

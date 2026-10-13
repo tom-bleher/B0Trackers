@@ -10,16 +10,22 @@ from pathlib import Path
 
 try:
     from .b0_metrics import (
+        INTERVAL_DEFINITION,
         binned_efficiency,
         distribution_summary,
+        in_bin,
+        out_of_range_counts,
         pull_summary,
         stage_efficiencies,
         wilson_efficiency,
     )
 except ImportError:
     from b0_metrics import (
+        INTERVAL_DEFINITION,
         binned_efficiency,
         distribution_summary,
+        in_bin,
+        out_of_range_counts,
         pull_summary,
         stage_efficiencies,
         wilson_efficiency,
@@ -128,7 +134,56 @@ def _station_residual_summary(station, state_type, resid0, resid1, np, extra_mas
     return out
 
 
-def _plot_stage_flow(outdir, stages, np, *, truth_specific: bool):
+def _first_per_event(tree, name, ak, np):
+    values = ak.firsts(_jagged(tree, name, ak), axis=1)
+    return np.asarray(ak.to_numpy(ak.fill_none(values, math.nan)), dtype=float)
+
+
+def _beam_frame_phi(px, py, pz, bx, by, bz, np):
+    """Azimuth of p around the beam axis b, measured from the lab x axis
+    projected transverse to b. In the lab frame a 25 mrad crossing angle puts
+    every forward proton near phi = pi; around the beam the azimuth is
+    physical. NaN where the beam direction is unknown."""
+    b = np.stack([bx, by, bz], axis=-1)
+    p = np.stack([px, py, pz], axis=-1)
+    norm = np.linalg.norm(b, axis=-1, keepdims=True)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        zhat = b / norm
+        xref = np.zeros_like(b)
+        xref[..., 0] = 1.0
+        xprime = xref - np.sum(xref * zhat, axis=-1, keepdims=True) * zhat
+        xprime /= np.linalg.norm(xprime, axis=-1, keepdims=True)
+        yprime = np.cross(zhat, xprime)
+        return np.arctan2(np.sum(p * yprime, axis=-1), np.sum(p * xprime, axis=-1))
+
+
+def _face_residual_summary(station, side, state_type, resid0, resid1, np, extra_mask=None):
+    """Residuals per (station, face). Local axes flip between the two faces of
+    a station, so pooling them cancels any bias in the mean."""
+    station = np.asarray(station, dtype=int)
+    side = np.asarray(side, dtype=int)
+    state_type = np.asarray(state_type, dtype=int)
+    mask = (state_type & 1) != 0
+    if extra_mask is not None:
+        mask &= np.asarray(extra_mask, dtype=bool)
+    out: dict[str, dict] = {}
+    for st, sd in sorted(set(zip(station[mask].tolist(), side[mask].tolist()))):
+        if st <= 0:
+            continue
+        use = mask & (station == st) & (side == sd)
+        label = f"S{st}{'F' if sd == 1 else 'B' if sd == 0 else 'U'}"
+        out[label] = {
+            "loc0": distribution_summary(np.asarray(resid0, dtype=float)[use].tolist()),
+            "loc1": distribution_summary(np.asarray(resid1, dtype=float)[use].tolist()),
+        }
+    return out
+
+
+def _with_context(title: str, context: str) -> str:
+    return f"{title}\n{context}" if context else title
+
+
+def _plot_stage_flow(outdir, stages, np, *, truth_specific: bool, context: str = ""):
     import matplotlib.pyplot as plt
 
     names = ["Seed", "CKF candidate", "After ambiguity", "Truth matched"]
@@ -149,10 +204,10 @@ def _plot_stage_flow(outdir, stages, np, *, truth_specific: bool):
     ax.set_ylim(0.0, 1.05)
     ax.set_ylabel("Fraction of truth-reachable events")
     if truth_specific:
-        ax.set_title("Selected-primary B0 reconstruction flow")
+        ax.set_title(_with_context("Selected-primary B0 reconstruction flow", context), fontsize=9)
         filename = "selected_primary_stage_flow.png"
     else:
-        ax.set_title("Event-level B0 object presence (not primary-specific)")
+        ax.set_title(_with_context("Event-level B0 object presence (not primary-specific)", context), fontsize=9)
         filename = "event_stage_presence.png"
     ax.grid(axis="y", alpha=0.25)
     fig.tight_layout()
@@ -160,7 +215,7 @@ def _plot_stage_flow(outdir, stages, np, *, truth_specific: bool):
     plt.close(fig)
 
 
-def _plot_full_selected_primary_funnel(outdir, funnel, np):
+def _plot_full_selected_primary_funnel(outdir, funnel, np, context: str = ""):
     import matplotlib.pyplot as plt
 
     stages = funnel.get("stages", [])
@@ -177,14 +232,14 @@ def _plot_full_selected_primary_funnel(outdir, funnel, np):
     ax.set_xticks(range(len(names)), names, rotation=20, ha="right")
     ax.set_ylim(0.0, 1.05)
     ax.set_ylabel("Fraction of generated selected primaries")
-    ax.set_title("Selected-primary B0 reconstruction funnel")
+    ax.set_title(_with_context("Selected-primary B0 reconstruction funnel", context), fontsize=9)
     ax.grid(axis="y", alpha=0.25)
     fig.tight_layout()
     fig.savefig(outdir / "selected_primary_full_funnel.png", dpi=160)
     plt.close(fig)
 
 
-def _plot_hist(outdir, values, filename, xlabel, title, np, bins=60, hist_range=None):
+def _plot_hist(outdir, values, filename, xlabel, title, np, bins=60, hist_range=None, context: str = ""):
     import matplotlib.pyplot as plt
 
     values = np.asarray(values, dtype=float)
@@ -195,14 +250,14 @@ def _plot_hist(outdir, values, filename, xlabel, title, np, bins=60, hist_range=
     ax.hist(values, bins=bins, range=hist_range, histtype="step", linewidth=1.5)
     ax.set_xlabel(xlabel)
     ax.set_ylabel("Entries")
-    ax.set_title(title)
+    ax.set_title(_with_context(title, context), fontsize=9)
     ax.grid(alpha=0.2)
     fig.tight_layout()
     fig.savefig(outdir / filename, dpi=160)
     plt.close(fig)
 
 
-def _plot_binned_efficiency(outdir, rows, filename, xlabel, title, np):
+def _plot_binned_efficiency(outdir, rows, filename, xlabel, title, np, context: str = ""):
     import matplotlib.pyplot as plt
 
     valid = [
@@ -234,7 +289,7 @@ def _plot_binned_efficiency(outdir, rows, filename, xlabel, title, np):
     ax.set_ylim(0.0, 1.05)
     ax.set_xlabel(xlabel)
     ax.set_ylabel("Truth-matched efficiency")
-    ax.set_title(title)
+    ax.set_title(_with_context(title, context), fontsize=9)
     ax.grid(alpha=0.2)
     fig.tight_layout()
     fig.savefig(outdir / filename, dpi=160)
@@ -284,7 +339,7 @@ def _selected_primary_patterns(tree, eligible, matched, ak):
     return out
 
 
-def _plot_residual_rms(outdir, residuals, np, filename, title):
+def _plot_residual_rms(outdir, residuals, np, filename, title, context: str = ""):
     import matplotlib.pyplot as plt
 
     stations = sorted(int(station) for station in residuals)
@@ -301,7 +356,7 @@ def _plot_residual_rms(outdir, residuals, np, filename, title):
     ax.set_xticks(x, [str(s) for s in stations])
     ax.set_xlabel("B0 station")
     ax.set_ylabel("Residual RMS [mm]")
-    ax.set_title(title)
+    ax.set_title(_with_context(title, context), fontsize=9)
     ax.legend()
     ax.grid(axis="y", alpha=0.2)
     fig.tight_layout()
@@ -386,6 +441,23 @@ def build_report(
                 )
         elif is_schema3:
             raise SystemExit("schema 3 is missing has_ckf_assocs_unfiltered")
+        if schema_versions and min(schema_versions) < 11 and {"station", "plane"} <= keys:
+            flat_station = _jagged(tree, "station", ak)
+            flat_plane = _jagged(tree, "plane", ak)
+            max_station = ak.max(flat_station, axis=None)
+            max_plane = ak.max(flat_plane, axis=None)
+            if (
+                max_station is not None
+                and max_plane is not None
+                and int(max_plane) > 4
+                and int(max_station) == int(max_plane)
+                and bool(ak.all(flat_station == flat_plane))
+            ):
+                raise SystemExit(
+                    "schema < 11 file from a per-face B0 geometry: `station` equals the cellID layer "
+                    f"(1-{int(max_plane)}), so every station count and denominator is inflated. "
+                    "Regenerate it with B0Trackers schema >= 11."
+                )
         stations = _scalar(tree, "n_stations_primary", np)
         n_seeds = _scalar(tree, "n_stub_seeds", np)
         n_unfiltered = _scalar(tree, "n_ckf_unfiltered", np)
@@ -393,7 +465,23 @@ def build_report(
         matched_index = _scalar(tree, "ckf_truth_matched_trk_index", np).astype(int)
 
         eligible = stations >= min_stations
-        matched = matched_index >= 0
+        # One truth-match definition for the numerator and for fakes/duplicates:
+        # the dominant association must be the selected primary with weight at
+        # least min_truth_weight. (The plugin's truth_matched selection itself
+        # applies no weight cut.)
+        if "ckf_truth_matched_trk_assoc_weight" in keys:
+            matched_weight = _scalar(tree, "ckf_truth_matched_trk_assoc_weight", np).astype(float)
+            matched = (matched_index >= 0) & np.isfinite(matched_weight) & (
+                matched_weight >= min_truth_weight
+            )
+            truth_match_definition = (
+                f"dominant association to the selected primary with weight >= {min_truth_weight:.3g}"
+            )
+        else:
+            matched = matched_index >= 0
+            truth_match_definition = (
+                "dominant association to the selected primary (no weight branch in this schema)"
+            )
 
         # Schema 2 only knows whether *any* seed/candidate exists in an event.
         # Keep these useful event-presence diagnostics, but do not call the
@@ -419,7 +507,7 @@ def build_report(
                 _scalar(tree, "sel_primary_has_seed", np).astype(bool).tolist(),
                 _scalar(tree, "sel_primary_has_unfiltered_track", np).astype(bool).tolist(),
                 _scalar(tree, "sel_primary_has_filtered_track", np).astype(bool).tolist(),
-                _scalar(tree, "sel_primary_has_truth_matched_track", np).astype(bool).tolist(),
+                matched.tolist(),
             )
 
         selected_primary_full_funnel = None
@@ -445,9 +533,7 @@ def build_report(
             filtered_stage = unfiltered_stage & _scalar(
                 tree, "sel_primary_has_filtered_track", np
             ).astype(bool)
-            matched_stage = filtered_stage & _scalar(
-                tree, "sel_primary_has_truth_matched_track", np
-            ).astype(bool)
+            matched_stage = filtered_stage & matched
 
             ordered_stages = [
                 ("truth_reachable", "Truth reachable", reachable_stage),
@@ -504,7 +590,21 @@ def build_report(
         truth_theta_mrad = _scalar(tree, "sel_primary_thscat_mrad", np).astype(float)
         truth_px = _scalar(tree, "sel_primary_px", np).astype(float)
         truth_py = _scalar(tree, "sel_primary_py", np).astype(float)
-        truth_phi = np.arctan2(truth_py, truth_px)
+        beam_branches = {"beam_proton_px", "beam_proton_py", "beam_proton_pz", "sel_primary_pz"}
+        if beam_branches <= keys:
+            truth_phi = _beam_frame_phi(
+                truth_px,
+                truth_py,
+                _scalar(tree, "sel_primary_pz", np).astype(float),
+                _first_per_event(tree, "beam_proton_px", ak, np),
+                _first_per_event(tree, "beam_proton_py", ak, np),
+                _first_per_event(tree, "beam_proton_pz", ak, np),
+                np,
+            )
+            phi_frame = "beam: azimuth around the status-4 beam proton, from lab x projected transverse to it"
+        else:
+            truth_phi = np.arctan2(truth_py, truth_px)
+            phi_frame = "lab (no beam-proton branches; distorted by the crossing angle)"
         delta_p = _scalar(tree, "ckf_truth_matched_trk_delta_p", np).astype(float)
         matched_mask = eligible & matched & np.isfinite(truth_p) & (truth_p > 0.0) & np.isfinite(delta_p)
         rel_delta_p = np.full(tree.num_entries, np.nan, dtype=float)
@@ -529,23 +629,36 @@ def build_report(
             "efficiency_vs_scattering_angle_mrad": binned_efficiency(
                 truth_theta_mrad.tolist(), matched.tolist(), eligible.tolist(), angle_bins_mrad
             ),
-            "efficiency_vs_truth_phi_rad": binned_efficiency(
+            "efficiency_vs_phi_rad": binned_efficiency(
                 truth_phi.tolist(), matched.tolist(), eligible.tolist(), phi_bins_rad
             ),
-            "truth_phi": distribution_summary(truth_phi[eligible].tolist()),
+            "phi_frame": phi_frame,
+            "phi": distribution_summary(truth_phi[eligible].tolist()),
+            # Eligible events the binned efficiencies above leave out: outside
+            # the edges, or with no finite truth value (e.g. no status-4 beam
+            # proton for the scattering angle).
+            "out_of_range": {
+                "truth_p_GeV": out_of_range_counts(truth_p.tolist(), eligible.tolist(), momentum_bins),
+                "scattering_angle_mrad": out_of_range_counts(
+                    truth_theta_mrad.tolist(), eligible.tolist(), angle_bins_mrad
+                ),
+                "phi_rad": out_of_range_counts(truth_phi.tolist(), eligible.tolist(), phi_bins_rad),
+            },
         }
 
         # Resolution is meaningful only for truth-matched tracks. Report robust
         # width and bias versus truth momentum/angle in the same explicit bins.
         truth_metrics["relative_delta_p_vs_truth_p_GeV"] = []
-        for lo, hi in zip(momentum_bins, momentum_bins[1:]):
-            use = matched_mask & (truth_p >= lo) & (truth_p < hi)
+        last_p = len(momentum_bins) - 2
+        for i, (lo, hi) in enumerate(zip(momentum_bins, momentum_bins[1:])):
+            use = matched_mask & np.array([in_bin(v, lo, hi, i == last_p) for v in truth_p])
             truth_metrics["relative_delta_p_vs_truth_p_GeV"].append(
                 {"low": lo, "high": hi, **distribution_summary(rel_delta_p[use].tolist())}
             )
         truth_metrics["relative_delta_p_vs_scattering_angle_mrad"] = []
-        for lo, hi in zip(angle_bins_mrad, angle_bins_mrad[1:]):
-            use = matched_mask & (truth_theta_mrad >= lo) & (truth_theta_mrad < hi)
+        last_a = len(angle_bins_mrad) - 2
+        for i, (lo, hi) in enumerate(zip(angle_bins_mrad, angle_bins_mrad[1:])):
+            use = matched_mask & np.array([in_bin(v, lo, hi, i == last_a) for v in truth_theta_mrad])
             truth_metrics["relative_delta_p_vs_scattering_angle_mrad"].append(
                 {"low": lo, "high": hi, **distribution_summary(rel_delta_p[use].tolist())}
             )
@@ -566,6 +679,41 @@ def build_report(
                 int(np.count_nonzero(survived[ambiguity_den] == 1)),
                 int(np.count_nonzero(ambiguity_den)),
             ).as_dict()
+            seed_metrics["definition"] = (
+                "all_seeds: every B0TrackerSeeds entry, dominated by combinatorial triplets; "
+                "selected_primary_seeds: seeds whose dominant hit truth is the selected primary "
+                "in truth-reachable events"
+            )
+            if {"seed_assoc_mcIndex", "seed_assoc_mcCollectionID"} <= keys:
+                seed_idx_j = _jagged(tree, "seed_assoc_mcIndex", ak)
+                seed_col_j = _jagged(tree, "seed_assoc_mcCollectionID", ak)
+                sel_idx = _scalar(tree, "sel_primary_mcIndex", np).astype(int)
+                sel_col = _scalar(tree, "sel_primary_mcCollectionID", np).astype(int)
+                primary_seed = (
+                    (seed_idx_j >= 0)
+                    & (seed_idx_j == ak.broadcast_arrays(seed_idx_j, sel_idx)[1])
+                    & (seed_col_j == ak.broadcast_arrays(seed_col_j, sel_col)[1])
+                    & ak.broadcast_arrays(seed_idx_j, eligible)[1]
+                )
+                primary_seed = np.asarray(ak.to_numpy(ak.flatten(primary_seed, axis=1)), dtype=bool)
+                known_primary = primary_seed & known_ckf
+                made_primary = primary_seed & (made_unfiltered == 1)
+                seed_metrics["selected_primary_seeds"] = {
+                    "seeds": int(np.count_nonzero(primary_seed)),
+                    "fraction_of_all_seeds": (
+                        float(np.count_nonzero(primary_seed)) / primary_seed.size
+                        if primary_seed.size
+                        else math.nan
+                    ),
+                    "made_unfiltered": wilson_efficiency(
+                        int(np.count_nonzero(made_unfiltered[known_primary] == 1)),
+                        int(np.count_nonzero(known_primary)),
+                    ).as_dict(),
+                    "survived_ambiguity_given_ckf": wilson_efficiency(
+                        int(np.count_nonzero(survived[made_primary] == 1)),
+                        int(np.count_nonzero(made_primary)),
+                    ).as_dict(),
+                }
 
         mapping: dict[str, dict] = {}
         for label, prefix in (("stub_ckf", "ckf_trk_"), ("truth_seeded", "trk_")):
@@ -601,6 +749,20 @@ def build_report(
             residuals["all_stub_ckf_tracks"] = _station_residual_summary(
                 state_station, state_type, resid0, resid1, np
             )
+            state_side = None
+            if "ckf_trk_aclgad_side" in keys:
+                state_side = _flat(tree, "ckf_trk_aclgad_side", ak, np).astype(int)
+                residuals["all_stub_ckf_tracks_by_face"] = _face_residual_summary(
+                    state_station, state_side, state_type, resid0, resid1, np
+                )
+            if "ckf_trk_state_estimate_kind" in keys:
+                kind = _flat(tree, "ckf_trk_state_estimate_kind", ak, np).astype(int)
+                measured = (state_type & 1) != 0
+                names = {3: "smoothed", 2: "filtered", 1: "predicted", 0: "none"}
+                residuals["estimate_kind_of_measurement_states"] = {
+                    names.get(int(k), str(int(k))): int(np.count_nonzero(measured & (kind == k)))
+                    for k in sorted(set(kind[measured].tolist()))
+                }
 
             stable_state_identity = {
                 "ckf_trk_state_parent_track_index",
@@ -661,6 +823,10 @@ def build_report(
                 residuals["truth_matched_track_stable_identity"] = _station_residual_summary(
                     state_station, state_type, resid0, resid1, np, selected_state_mask
                 )
+                if state_side is not None:
+                    residuals["truth_matched_track_stable_identity_by_face"] = _face_residual_summary(
+                        state_station, state_side, state_type, resid0, resid1, np, selected_state_mask
+                    )
             else:
                 # Schema 2 fallback: retain the explicitly labelled positional view.
                 repeated_match = np.asarray(
@@ -776,6 +942,7 @@ def build_report(
             "tree": tree_name,
             "schema_versions": schema_versions,
             "geometry_names": _unique_strings(tree, "geometry_name", ak),
+            "detector_paths": _unique_strings(tree, "detector_path", ak),
             "manifest": manifest or {},
         }
 
@@ -787,6 +954,9 @@ def build_report(
             "selection": {
                 "definition": f"selected primary crosses at least {min_stations} truth B0 stations",
                 "min_stations": min_stations,
+                "truth_match": truth_match_definition,
+                "truth_match_min_weight": min_truth_weight,
+                "efficiency_interval": INTERVAL_DEFINITION,
                 "note": (
                     "This is a truth-reachability denominator, not a measurement-level reconstructability definition. "
                     "Use it primarily for controlled single-primary samples."
@@ -806,7 +976,12 @@ def build_report(
             "measurement_residuals_by_station": residuals,
             "predicted_innovation": innovation,
             "residual_interpretation": (
-                "State residuals are fit diagnostics, not intrinsic detector-resolution measurements. "
+                "State residuals are fit diagnostics, not intrinsic detector-resolution measurements: "
+                "they come mostly from smoothed states, which include the hit (see "
+                "estimate_kind_of_measurement_states); predicted_innovation is the unbiased view. "
+                "Local axes flip between the two faces of a station and between rotZ=180 deg modules, "
+                "so per-station means mix opposite orientations and are not bias estimates; *_by_face "
+                "separates the faces, but its means still mix rotated modules within a face. "
                 "When schema-3 parent-track ObjectIDs are available, the selected truth-matched view uses "
                 "stable PODIO identity; otherwise the explicitly labelled schema-2 nominal view relies on "
                 "positional ACTS/trajectory alignment."
@@ -817,11 +992,18 @@ def build_report(
 
         if make_plots:
             outdir.mkdir(parents=True, exist_ok=True)
-            _plot_stage_flow(outdir, event_stage_presence, np, truth_specific=False)
+            # Figures carry their own provenance: geometry, sample, schema and cuts.
+            dataset = (manifest or {}).get("input_dataset") or path.name
+            context = (
+                f"{', '.join(provenance['geometry_names']) or 'unknown geometry'} | {dataset} | "
+                f"schema {','.join(str(v) for v in schema_versions)} | "
+                f">= {min_stations} truth stations, truth weight >= {min_truth_weight:.3g}"
+            )
+            _plot_stage_flow(outdir, event_stage_presence, np, truth_specific=False, context=context)
             if selected_primary_stages is not None:
-                _plot_stage_flow(outdir, selected_primary_stages, np, truth_specific=True)
+                _plot_stage_flow(outdir, selected_primary_stages, np, truth_specific=True, context=context)
             if selected_primary_full_funnel is not None:
-                _plot_full_selected_primary_funnel(outdir, selected_primary_full_funnel, np)
+                _plot_full_selected_primary_funnel(outdir, selected_primary_full_funnel, np, context)
             _plot_binned_efficiency(
                 outdir,
                 truth_metrics["efficiency_vs_truth_p_GeV"],
@@ -829,6 +1011,7 @@ def build_report(
                 "truth p [GeV]",
                 "B0 truth-matched efficiency vs momentum",
                 np,
+                context=context,
             )
             _plot_binned_efficiency(
                 outdir,
@@ -837,14 +1020,16 @@ def build_report(
                 "truth scattering angle [mrad]",
                 "B0 truth-matched efficiency vs scattering angle",
                 np,
+                context=context,
             )
             _plot_binned_efficiency(
                 outdir,
-                truth_metrics["efficiency_vs_truth_phi_rad"],
-                "efficiency_vs_truth_phi.png",
-                "truth phi [rad]",
+                truth_metrics["efficiency_vs_phi_rad"],
+                "efficiency_vs_phi.png",
+                "truth phi around the beam [rad]" if phi_frame.startswith("beam") else "truth phi (lab) [rad]",
                 "B0 truth-matched efficiency vs phi",
                 np,
+                context=context,
             )
             _plot_hist(
                 outdir,
@@ -853,6 +1038,7 @@ def build_report(
                 r"$(p_{reco}-p_{truth})/p_{truth}$",
                 "Truth-matched B0 momentum residual",
                 np,
+                context=context,
             )
             for branch, label, filename in [
                 ("ckf_truth_matched_trk_pull_qOverP", "q/p pull", "pull_qoverp.png"),
@@ -867,6 +1053,7 @@ def build_report(
                     f"Truth-matched B0 {label}",
                     np,
                     hist_range=(-5.0, 5.0),
+                    context=context,
                 )
             if residuals.get("all_stub_ckf_tracks"):
                 _plot_residual_rms(
@@ -875,6 +1062,7 @@ def build_report(
                     np,
                     "measurement_residual_rms_all_tracks.png",
                     "All stub-CKF measurement-state residual RMS",
+                    context=context,
                 )
             if residuals.get("truth_matched_track_stable_identity"):
                 _plot_residual_rms(
@@ -883,6 +1071,7 @@ def build_report(
                     np,
                     "measurement_residual_rms_truth_matched_stable.png",
                     "Truth-matched track residual RMS (stable ObjectID)",
+                    context=context,
                 )
             elif residuals.get("nominal_truth_matched_track_schema2_positional"):
                 _plot_residual_rms(
@@ -891,6 +1080,7 @@ def build_report(
                     np,
                     "measurement_residual_rms_truth_matched_nominal.png",
                     "Nominal truth-matched track residual RMS (schema-2 positional)",
+                    context=context,
                 )
 
     return report
@@ -905,7 +1095,7 @@ def main() -> int:
     parser.add_argument(
         "--momentum-bins",
         type=_parse_edges,
-        default=_parse_edges("0,5,10,15,20,30,40,60,100"),
+        default=_parse_edges("0,5,10,15,20,30,40,60,100,150,200,300"),
         help="truth-momentum bin edges in GeV",
     )
     parser.add_argument(
@@ -921,13 +1111,14 @@ def main() -> int:
             "-3.1415926536,-2.3561944902,-1.5707963268,-0.7853981634,0,"
             "0.7853981634,1.5707963268,2.3561944902,3.1415926536"
         ),
-        help="truth phi bin edges in radians",
+        help="truth phi bin edges in radians (around the beam proton when available)",
     )
     parser.add_argument(
         "--min-truth-weight",
         type=float,
         default=0.5,
-        help="dominant track-to-MC association threshold used for fake/duplicate definitions",
+        help="dominant track-to-MC association weight required for a truth match; used for the "
+        "efficiency numerator and the fake/duplicate definitions alike",
     )
     parser.add_argument(
         "--manifest",

@@ -30,8 +30,12 @@ class Efficiency:
         }
 
 
+# Every efficiency interval in the reports is a Wilson score interval at z = 1.
+INTERVAL_DEFINITION = "Wilson score interval, z = 1 (68.3% central coverage)"
+
+
 def wilson_efficiency(numerator: int, denominator: int, z: float = 1.0) -> Efficiency:
-    """Return a binomial efficiency with a Wilson interval."""
+    """Return a binomial efficiency with a Wilson interval (z = 1: 68.3%)."""
     if denominator < 0 or numerator < 0 or numerator > denominator:
         raise ValueError("require 0 <= numerator <= denominator")
     if denominator == 0:
@@ -81,18 +85,23 @@ def distribution_summary(values: Iterable[float]) -> dict[str, float | int]:
             "median": math.nan,
             "q16": math.nan,
             "q84": math.nan,
+            "half_width_68": math.nan,
             "rms": math.nan,
         }
 
     mean = fmean(vals)
     variance = fmean((x - mean) ** 2 for x in vals)
+    q16 = quantile(vals, 0.16)
+    q84 = quantile(vals, 0.84)
     return {
         "n": len(vals),
         "mean": mean,
         "std": math.sqrt(variance),
         "median": median(vals),
-        "q16": quantile(vals, 0.16),
-        "q84": quantile(vals, 0.84),
+        "q16": q16,
+        "q84": q84,
+        # Robust core width: unlike std it is not driven by a few tail entries.
+        "half_width_68": (q84 - q16) / 2.0,
         "rms": math.sqrt(fmean(x * x for x in vals)),
     }
 
@@ -168,8 +177,7 @@ def binned_efficiency(
         for value, ok, use in zip(values, passed, eligible):
             if not use or not math.isfinite(float(value)):
                 continue
-            inside = lo <= value <= hi if i == last else lo <= value < hi
-            if inside:
+            if in_bin(value, lo, hi, i == last):
                 den += 1
                 num += bool(ok)
         eff = wilson_efficiency(num, den).as_dict()
@@ -185,6 +193,33 @@ def binned_efficiency(
             }
         )
     return rows
+
+
+def in_bin(value: float, lo: float, hi: float, is_last: bool) -> bool:
+    """Half-open [lo, hi), with the last bin closed so the top edge is kept."""
+    return lo <= value <= hi if is_last else lo <= value < hi
+
+
+def out_of_range_counts(
+    values: Sequence[float],
+    eligible: Sequence[bool],
+    edges: Sequence[float],
+) -> dict[str, int]:
+    """Count eligible entries that binned_efficiency silently leaves out."""
+    if len(values) != len(eligible):
+        raise ValueError("values/eligible must have identical length")
+    counts = {"underflow": 0, "overflow": 0, "nonfinite": 0}
+    for value, use in zip(values, eligible):
+        if not use:
+            continue
+        value = float(value)
+        if not math.isfinite(value):
+            counts["nonfinite"] += 1
+        elif value < edges[0]:
+            counts["underflow"] += 1
+        elif value > edges[-1]:
+            counts["overflow"] += 1
+    return counts
 
 
 def nested_get(mapping: dict, path: str):
@@ -227,6 +262,30 @@ def evaluate_regression_policy(
         path = check["path"]
         mode = check["mode"]
         tolerance = float(check["tolerance"])
+        if mode == "max_drop_sigma":
+            # `path` names an efficiency dict (value/low/high). Fail when the
+            # candidate drops by more than `tolerance` combined interval
+            # half-widths, so the gate scales with the sample size.
+            base_eff = nested_get(baseline, path)
+            cand_eff = nested_get(candidate, path)
+            values = [float(d[k]) for d in (base_eff, cand_eff) for k in ("value", "low", "high")]
+            if not all(math.isfinite(v) for v in values):
+                failures.append({"path": path, "reason": "non-finite", "baseline": base_eff, "candidate": cand_eff})
+                continue
+            base, base_low, base_high, cand, cand_low, cand_high = values
+            sigma = math.hypot((base_high - base_low) / 2.0, (cand_high - cand_low) / 2.0)
+            if cand < base - tolerance * sigma:
+                failures.append(
+                    {
+                        "path": path,
+                        "mode": mode,
+                        "tolerance": tolerance,
+                        "combined_sigma": sigma,
+                        "baseline": base,
+                        "candidate": cand,
+                    }
+                )
+            continue
         base = float(nested_get(baseline, path))
         cand = float(nested_get(candidate, path))
         if not (math.isfinite(base) and math.isfinite(cand)):

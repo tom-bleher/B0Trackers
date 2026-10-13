@@ -15,12 +15,15 @@ except ImportError:
 
 DEFAULT_CHECKS = [
     {
-        "path": "event_stage_presence.truth_matched_over_eligible.value",
-        "mode": "max_drop",
-        "tolerance": 0.01,
+        # Fails on a drop larger than 2 combined Wilson half-widths, so the
+        # gate tightens as the samples grow instead of tripping on noise.
+        "path": "event_stage_presence.truth_matched_over_eligible",
+        "mode": "max_drop_sigma",
+        "tolerance": 2.0,
     },
     {
-        "path": "truth_matched.relative_delta_p.std",
+        # Core width (q84 - q16) / 2: the std is driven by a few tail tracks.
+        "path": "truth_matched.relative_delta_p.half_width_68",
         "mode": "max_fractional_increase",
         "tolerance": 0.10,
     },
@@ -102,6 +105,18 @@ def main() -> int:
         print("Use --allow-incompatible only for an intentional cross-configuration comparison.")
         return 3
 
+    for label, manifest in (("baseline", baseline_manifest), ("candidate", candidate_manifest)):
+        dirty = [
+            key.removesuffix("_dirty")
+            for key in ("epic_dirty", "eicrecon_dirty", "b0trackers_dirty")
+            if manifest.get(key)
+        ]
+        if dirty:
+            print(
+                f"warning: {label} ran from uncommitted checkouts ({', '.join(dirty)}); "
+                "their commit hashes do not identify the code that produced it"
+            )
+
     if not baseline_manifest and not candidate_manifest:
         print(
             "warning: neither report contains a run manifest; only embedded schema/geometry/selection "
@@ -118,6 +133,8 @@ def main() -> int:
         except KeyError:
             print(f"{path:56} {'MISSING':>12} {'MISSING':>12}")
             continue
+        if isinstance(base, dict) and isinstance(cand, dict):
+            base, cand = base.get("value"), cand.get("value")
         print(f"{path:56} {str(base):>12} {str(cand):>12}")
 
     try:

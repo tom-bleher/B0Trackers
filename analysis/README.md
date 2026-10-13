@@ -36,6 +36,30 @@ residuals include the hit itself and are shrunk, so they are fit-quality
 diagnostics, not an intrinsic AC-LGAD spatial resolution. The unbiased
 quantities are the predicted innovations `*_state_innov*` and their pulls.
 
+Definitions the report applies, all recorded in `summary.json`:
+
+- **Truth match** (`selection.truth_match`): the track's dominant MC
+  association is the selected primary with weight >= `--min-truth-weight`
+  (default 0.5). The efficiency numerator, the funnel's last stage and the
+  fake/duplicate counts share this one threshold, so no track is both
+  efficient and fake.
+- **Intervals** (`selection.efficiency_interval`): Wilson score, z = 1 (68.3%).
+- **Phi** (`truth_matched.phi_frame`): azimuth around the status-4 beam
+  proton. In the lab frame the 25 mrad crossing angle piles every B0 proton
+  up near pi.
+- **Out of range** (`truth_matched.out_of_range`): eligible events outside the
+  bin edges or without a finite truth value, which the binned efficiencies
+  would otherwise drop silently. The default momentum edges reach 300 GeV.
+- **Residuals**: `*_by_face` splits each station into its back and front
+  faces (local axes flip between them), and
+  `estimate_kind_of_measurement_states` says how many residuals come from
+  smoothed states. Use `predicted_innovation` for unbiased pulls.
+- **Seed survival**: `all seeds` is dominated by combinatorial triplets;
+  `selected_primary_seeds` restricts to seeds whose hits belong to the
+  selected primary.
+- Files from schema < 11 written on the per-face geometry (station = cellID
+  layer) are refused.
+
 Likewise, schema 2 increments `n_sensor_map_failed` for some non-physics states
 that are not expected to map to a B0 sensor. The report preserves that raw count
 for debugging, but regression gating uses the fallback fraction among resolved
@@ -55,7 +79,13 @@ python3 analysis/compare_b0_metrics.py \
 
 The comparison exits non-zero when a configured check fails, so it can be used
 in CI or a local validation script. Supported checks include absolute efficiency
-drops, absolute increases, fractional worsening, and absolute changes.
+drops, absolute increases, fractional worsening, and absolute changes, plus
+`max_drop_sigma`. That check takes the path of an efficiency object
+(`value`/`low`/`high`) and fails when the drop exceeds `tolerance` combined
+Wilson half-widths, so it scales with the sample size. The default and example
+policies use it for efficiency, and `half_width_68` ((q84 - q16) / 2) rather
+than `std` for the momentum resolution. A run from an uncommitted checkout
+(`*_dirty` in the manifest) triggers a warning.
 
 The example policy is deliberately conservative but is **not a physics-approved
 acceptance specification**. Tune tolerances to the sample size, detector setup,

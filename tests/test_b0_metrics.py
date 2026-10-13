@@ -5,6 +5,8 @@ from analysis.b0_metrics import (
     binned_efficiency,
     distribution_summary,
     evaluate_regression_policy,
+    in_bin,
+    out_of_range_counts,
     provenance_mismatches,
     stage_efficiencies,
     wilson_efficiency,
@@ -97,6 +99,41 @@ class B0MetricsTest(unittest.TestCase):
         failures = evaluate_regression_policy(baseline, candidate, checks)
         self.assertEqual(len(failures), 1)
         self.assertEqual(failures[0]["path"], "metrics.eff")
+
+
+    def test_half_width_68_ignores_tails(self):
+        core = [float(x) for x in range(-50, 51)]
+        with_tail = core + [1.0e6]
+        self.assertAlmostEqual(
+            distribution_summary(core)["half_width_68"],
+            distribution_summary(with_tail)["half_width_68"],
+            delta=1.0,
+        )
+        self.assertGreater(distribution_summary(with_tail)["std"], 1000.0)
+
+    def test_out_of_range_counts(self):
+        counts = out_of_range_counts(
+            values=[-1.0, 0.0, 5.0, 10.0, 11.0, float("nan"), 50.0],
+            eligible=[True, True, True, True, True, True, False],
+            edges=[0.0, 5.0, 10.0],
+        )
+        self.assertEqual(counts, {"underflow": 1, "overflow": 1, "nonfinite": 1})
+
+    def test_in_bin_closes_only_the_last_bin(self):
+        self.assertFalse(in_bin(5.0, 0.0, 5.0, False))
+        self.assertTrue(in_bin(5.0, 0.0, 5.0, True))
+        self.assertTrue(in_bin(0.0, 0.0, 5.0, False))
+
+    def test_max_drop_sigma_scales_with_statistics(self):
+        check = [{"path": "eff", "mode": "max_drop_sigma", "tolerance": 2.0}]
+        # 0.90 -> 0.85 at N = 100: within two combined Wilson half-widths.
+        small = (wilson_efficiency(90, 100).as_dict(), wilson_efficiency(85, 100).as_dict())
+        self.assertEqual(evaluate_regression_policy({"eff": small[0]}, {"eff": small[1]}, check), [])
+        # The same drop at N = 10000 is significant.
+        large = (wilson_efficiency(9000, 10000).as_dict(), wilson_efficiency(8500, 10000).as_dict())
+        failures = evaluate_regression_policy({"eff": large[0]}, {"eff": large[1]}, check)
+        self.assertEqual(len(failures), 1)
+        self.assertEqual(failures[0]["mode"], "max_drop_sigma")
 
 
 if __name__ == "__main__":

@@ -7,12 +7,12 @@
   ],
   "checks": [
     {
-      "path": "event_stage_presence.truth_matched_over_eligible.value",
-      "mode": "max_drop",
-      "tolerance": 0.01
+      "path": "event_stage_presence.truth_matched_over_eligible",
+      "mode": "max_drop_sigma",
+      "tolerance": 2.0
     },
     {
-      "path": "truth_matched.relative_delta_p.std",
+      "path": "truth_matched.relative_delta_p.half_width_68",
       "mode": "max_fractional_increase",
       "tolerance": 0.10
     },
