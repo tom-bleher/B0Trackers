@@ -64,6 +64,7 @@ private:
     bool m_enableTruthSeededChain = true;
     bool m_enableStubSeededChain = true;
     bool m_writeTrackStates = true;
+    bool m_writeNonPhysicsStates = true;
     std::string m_dumpSurfaceMap;
     bool m_writePropagation = false;
     bool m_writeLocal = false;
@@ -252,6 +253,7 @@ private:
         // Seeds.
         std::vector<double> vm_seed_quality, vm_seed_p, vm_seed_qOverP, vm_seed_theta, vm_seed_phi;
         std::vector<double> vm_seed_loc0, vm_seed_loc1;
+        std::vector<double> vm_seed_perigee_x, vm_seed_perigee_y, vm_seed_perigee_z;
         std::vector<double> vm_seed_sigma_qOverP, vm_seed_sigma_theta, vm_seed_sigma_phi;
         std::vector<int>    vm_seed_nHits, vm_seed_charge, vm_seed_momentum_resolved, vm_seed_became_track;
         std::vector<int>    vm_seed_made_unfiltered_track, vm_seed_survived_ambiguity;
@@ -261,6 +263,7 @@ private:
         std::vector<double> vm_seed_assoc_weight;
         std::vector<double> vm_truth_seed_quality, vm_truth_seed_p, vm_truth_seed_qOverP;
         std::vector<double> vm_truth_seed_theta, vm_truth_seed_phi, vm_truth_seed_loc0, vm_truth_seed_loc1;
+        std::vector<double> vm_truth_seed_perigee_x, vm_truth_seed_perigee_y, vm_truth_seed_perigee_z;
         std::vector<double> vm_truth_seed_sigma_qOverP, vm_truth_seed_sigma_theta, vm_truth_seed_sigma_phi;
         std::vector<int>    vm_truth_seed_nHits, vm_truth_seed_charge, vm_truth_seed_momentum_resolved;
         std::vector<int>    vm_truth_seed_became_track;
@@ -283,6 +286,9 @@ private:
         std::vector<int>    vm_ckfdiag_best_station_mask;
         std::vector<std::vector<int>> vm_ckfdiag_cand_per_station;
         int m_ckfdiagMaxStation = -1;
+        // 1 = unfiltered containers carry ckf_status, 0 = they do not
+        // (upstream CKFTracking), -1 = no unfiltered containers.
+        int m_ckfdiagStatusAvailable = -1;
         // Per-state CKF compatibility (schema 5). Flat across the event:
         // one row per physics state on a mapped B0 station of every
         // unfiltered candidate (accepted and rejected). Join to seeds via
@@ -474,6 +480,7 @@ private:
     // Seeds.
     std::vector<double> vm_seed_quality, vm_seed_p, vm_seed_qOverP, vm_seed_theta, vm_seed_phi;
     std::vector<double> vm_seed_loc0, vm_seed_loc1;
+    std::vector<double> vm_seed_perigee_x, vm_seed_perigee_y, vm_seed_perigee_z;
     std::vector<double> vm_seed_sigma_qOverP, vm_seed_sigma_theta, vm_seed_sigma_phi;
     std::vector<int>    vm_seed_nHits, vm_seed_charge, vm_seed_momentum_resolved, vm_seed_became_track;
     std::vector<int>    vm_seed_made_unfiltered_track, vm_seed_survived_ambiguity;
@@ -483,6 +490,7 @@ private:
     std::vector<double> vm_seed_assoc_weight;
     std::vector<double> vm_truth_seed_quality, vm_truth_seed_p, vm_truth_seed_qOverP;
     std::vector<double> vm_truth_seed_theta, vm_truth_seed_phi, vm_truth_seed_loc0, vm_truth_seed_loc1;
+    std::vector<double> vm_truth_seed_perigee_x, vm_truth_seed_perigee_y, vm_truth_seed_perigee_z;
     std::vector<double> vm_truth_seed_sigma_qOverP, vm_truth_seed_sigma_theta, vm_truth_seed_sigma_phi;
     std::vector<int>    vm_truth_seed_nHits, vm_truth_seed_charge, vm_truth_seed_momentum_resolved;
     std::vector<int>    vm_truth_seed_became_track;
@@ -502,6 +510,7 @@ private:
     std::vector<int>    vm_ckfdiag_best_station_mask;
     std::vector<std::vector<int>> vm_ckfdiag_cand_per_station;
     int m_ckfdiagMaxStation = -1;
+    int m_ckfdiagStatusAvailable = -1;
     std::vector<int> vm_ckfdiag_unf_seedpos, vm_ckfdiag_unf_status;
     std::vector<int> vm_ckfdiag_unf_station, vm_ckfdiag_unf_kind;
     std::vector<double> vm_ckfdiag_unf_chi2, vm_ckfdiag_unf_pull0, vm_ckfdiag_unf_pull1;

@@ -81,13 +81,16 @@
 #include <services/geometry/acts/ACTSGeo_service.h>
 #include <services/log/Log_service.h>
 
-// B0Trackers/hits branch map (schema 4):
+// B0Trackers/hits branch map (schema 11; see docs/schema*.md):
 //   trk_*                  = B0TrackerCKFTruthSeeded* (filtered), IP-perigee
 //   ckf_trk_*              = B0TrackerCKF* (filtered), IP-perigee
+//   seed_*                 = B0TrackerSeeds, on the perigee line through
+//                            seed_perigee_* (B0-local for triplet seeds)
 //   *_oracle_best_*        = min |p_reco-p_sel| (cheat; also aliased as best_trk_*)
 //   *_truth_matched_*      = assoc -> selected MC, ranked by weight
 //   *_reco_best_*          = nMeasurements / nHoles / chi2, no truth
-//   station                = from compact layer name/id (not a hardcoded layer/2)
+//   station / side         = from the face DetElement name (station{N}_{front|back}
+//                            or layer{N}), never from layer parity
 //   matchesPrimarySelector = every MC matching primary_pdg/status (alias: isPrimary)
 //   isSelPrimary           = selected highest-p primary only
 //   rec_* / raw_*          = B0TrackerRecHits / B0TrackerRawHits
@@ -108,6 +111,9 @@
 //                            truth_p/theta/phi are the associated MC particle
 //                            kinematics (NaN if none); truth_theta is global
 //                            polar, truth_thscat_mrad is beam-relative.
+//                            ckfdiag_status_available = 0 (upstream CKF, no
+//                            ckf_status column): n_candidates/best_status and
+//                            unf_status are -1 (unknown).
 //                            Outlier precedence: outlier > accepted measurement
 //                            (MeasurementFlag && !OutlierFlag) > hole.
 //   firstHit/lastHit       = aliases of Entry/Exit (min/max-time SimHits)
@@ -201,15 +207,17 @@ bool getOpt(const std::shared_ptr<const JEvent>& event, const char* name,
     return true;
 }
 
-// ACTS 45 replaced the TrackStateFlag enumerators with named accessors, so a
-// direct flags.test(Acts::TrackStateFlag::...) call stops compiling there.
+// ACTS 45 replaced the TrackStateFlag enumerators with named accessors (the
+// enumerators survive only as deprecated aliases for the same bits). The
+// choice is made by detecting the accessor, not by Acts_VERSION_MAJOR: that
+// macro is a compile definition of EICrecon's own targets and is undefined
+// in this plugin, so an #if on it silently selected the legacy branch even
+// with ACTS 46.
 //
 // The mask below is built only from accessors that are pure single-bit tests.
 // isMeasurement() and isMaterial() are compound predicates in ACTS 45
 // (measurement-and-not-outlier, material-and-not-measurement) and using them
 // would silently change what this diagnostic column means between versions.
-// The >= 45 branch follows the documented ACTS 45 API; the image in use here
-// is ACTS 44.4.0, so only the < 45 branch is exercised by our own builds.
 enum StateTypeBit {
     kStateMeasurement   = 1 << 0,
     kStateParameter     = 1 << 1,
@@ -223,25 +231,30 @@ enum StateTypeBit {
 
 template <typename FlagsT>
 int trackStateTypeMask(const FlagsT& flags) {
-#if Acts_VERSION_MAJOR >= 45
-    return (flags.hasMeasurement()   ? kStateMeasurement   : 0) |
-           (flags.hasParameters()    ? kStateParameter     : 0) |
-           (flags.isOutlier()        ? kStateOutlier       : 0) |
-           (flags.isHole()           ? kStateHole          : 0) |
-           (flags.hasMaterial()      ? kStateMaterial      : 0) |
-           (flags.isSharedHit()      ? kStateSharedHit     : 0) |
-           (flags.isSplitHit()       ? kStateSplitHit      : 0) |
-           (flags.hasNoExpectedHit() ? kStateNoExpectedHit : 0);
-#else
-    return (flags.test(Acts::TrackStateFlag::MeasurementFlag)   ? kStateMeasurement   : 0) |
-           (flags.test(Acts::TrackStateFlag::ParameterFlag)     ? kStateParameter     : 0) |
-           (flags.test(Acts::TrackStateFlag::OutlierFlag)       ? kStateOutlier       : 0) |
-           (flags.test(Acts::TrackStateFlag::HoleFlag)          ? kStateHole          : 0) |
-           (flags.test(Acts::TrackStateFlag::MaterialFlag)      ? kStateMaterial      : 0) |
-           (flags.test(Acts::TrackStateFlag::SharedHitFlag)     ? kStateSharedHit     : 0) |
-           (flags.test(Acts::TrackStateFlag::SplitHitFlag)      ? kStateSplitHit      : 0) |
-           (flags.test(Acts::TrackStateFlag::NoExpectedHitFlag) ? kStateNoExpectedHit : 0);
-#endif
+    if constexpr (requires { flags.hasMeasurement(); }) {
+        return (flags.hasMeasurement()   ? kStateMeasurement   : 0) |
+               (flags.hasParameters()    ? kStateParameter     : 0) |
+               (flags.isOutlier()        ? kStateOutlier       : 0) |
+               (flags.isHole()           ? kStateHole          : 0) |
+               (flags.hasMaterial()      ? kStateMaterial      : 0) |
+               (flags.isSharedHit()      ? kStateSharedHit     : 0) |
+               (flags.isSplitHit()       ? kStateSplitHit      : 0) |
+               (flags.hasNoExpectedHit() ? kStateNoExpectedHit : 0);
+    } else {
+        // Pre-45 ACTS only; the deprecated enumerators are still parsed (and
+        // would warn) when this branch is discarded.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+        return (flags.test(Acts::TrackStateFlag::MeasurementFlag)   ? kStateMeasurement   : 0) |
+               (flags.test(Acts::TrackStateFlag::ParameterFlag)     ? kStateParameter     : 0) |
+               (flags.test(Acts::TrackStateFlag::OutlierFlag)       ? kStateOutlier       : 0) |
+               (flags.test(Acts::TrackStateFlag::HoleFlag)          ? kStateHole          : 0) |
+               (flags.test(Acts::TrackStateFlag::MaterialFlag)      ? kStateMaterial      : 0) |
+               (flags.test(Acts::TrackStateFlag::SharedHitFlag)     ? kStateSharedHit     : 0) |
+               (flags.test(Acts::TrackStateFlag::SplitHitFlag)      ? kStateSplitHit      : 0) |
+               (flags.test(Acts::TrackStateFlag::NoExpectedHitFlag) ? kStateNoExpectedHit : 0);
+#pragma GCC diagnostic pop
+    }
 }
 
 // Innovation residual and compatibility for one CKF track state: r0/r1 are
@@ -333,6 +346,9 @@ void B0Trackers::Init() {
                              "Request and analyze the stub-seeded B0 CKF chain");
     app->SetDefaultParameter("B0Trackers:write_track_states", m_writeTrackStates,
                              "Request ACTS track containers and write per-state diagnostics");
+    app->SetDefaultParameter("B0Trackers:write_nonphysics_states", m_writeNonPhysicsStates,
+                             "Also write per-state rows for states without a measurement, "
+                             "outlier or hole (material/passive surfaces; ~80% of rows)");
     app->SetDefaultParameter("B0Trackers:dump_surface_map", m_dumpSurfaceMap,
                              "Write B0 ACTS surface dump JSON at init (empty disables)");
     app->SetDefaultParameter("B0Trackers:write_propagation", m_writePropagation,
@@ -390,6 +406,7 @@ void B0Trackers::Init() {
     m_tree->Branch("config_enable_truth_seeded_chain", &m_enableTruthSeededChain);
     m_tree->Branch("config_enable_stub_seeded_chain", &m_enableStubSeededChain);
     m_tree->Branch("config_write_track_states", &m_writeTrackStates);
+    m_tree->Branch("config_write_nonphysics_states", &m_writeNonPhysicsStates);
 
     m_tree->Branch("xR",        &vm_xR);
     m_tree->Branch("yR",        &vm_yR);
@@ -626,6 +643,9 @@ void B0Trackers::Init() {
     m_tree->Branch("seed_phi", &vm_seed_phi);
     m_tree->Branch("seed_loc0", &vm_seed_loc0);
     m_tree->Branch("seed_loc1", &vm_seed_loc1);
+    m_tree->Branch("seed_perigee_x", &vm_seed_perigee_x);
+    m_tree->Branch("seed_perigee_y", &vm_seed_perigee_y);
+    m_tree->Branch("seed_perigee_z", &vm_seed_perigee_z);
     m_tree->Branch("seed_sigma_qOverP", &vm_seed_sigma_qOverP);
     m_tree->Branch("seed_sigma_theta", &vm_seed_sigma_theta);
     m_tree->Branch("seed_sigma_phi", &vm_seed_sigma_phi);
@@ -647,6 +667,9 @@ void B0Trackers::Init() {
     m_tree->Branch("truth_seed_phi", &vm_truth_seed_phi);
     m_tree->Branch("truth_seed_loc0", &vm_truth_seed_loc0);
     m_tree->Branch("truth_seed_loc1", &vm_truth_seed_loc1);
+    m_tree->Branch("truth_seed_perigee_x", &vm_truth_seed_perigee_x);
+    m_tree->Branch("truth_seed_perigee_y", &vm_truth_seed_perigee_y);
+    m_tree->Branch("truth_seed_perigee_z", &vm_truth_seed_perigee_z);
     m_tree->Branch("truth_seed_sigma_qOverP", &vm_truth_seed_sigma_qOverP);
     m_tree->Branch("truth_seed_sigma_theta", &vm_truth_seed_sigma_theta);
     m_tree->Branch("truth_seed_sigma_phi", &vm_truth_seed_sigma_phi);
@@ -682,6 +705,7 @@ void B0Trackers::Init() {
     m_tree->Branch("ckfdiag_best_station_mask", &vm_ckfdiag_best_station_mask);
     m_tree->Branch("ckfdiag_cand_per_station", &vm_ckfdiag_cand_per_station);
     m_tree->Branch("ckfdiag_max_station", &m_ckfdiagMaxStation);
+    m_tree->Branch("ckfdiag_status_available", &m_ckfdiagStatusAvailable);
     m_tree->Branch("ckfdiag_unf_seedpos", &vm_ckfdiag_unf_seedpos);
     m_tree->Branch("ckfdiag_unf_status", &vm_ckfdiag_unf_status);
     m_tree->Branch("ckfdiag_unf_station", &vm_ckfdiag_unf_station);
@@ -1237,6 +1261,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
 
     local.vm_seed_quality.clear(); local.vm_seed_p.clear(); local.vm_seed_qOverP.clear();
     local.vm_seed_theta.clear(); local.vm_seed_phi.clear(); local.vm_seed_loc0.clear(); local.vm_seed_loc1.clear();
+    local.vm_seed_perigee_x.clear(); local.vm_seed_perigee_y.clear(); local.vm_seed_perigee_z.clear();
     local.vm_seed_sigma_qOverP.clear(); local.vm_seed_sigma_theta.clear(); local.vm_seed_sigma_phi.clear();
     local.vm_seed_nHits.clear(); local.vm_seed_charge.clear();
     local.vm_seed_momentum_resolved.clear(); local.vm_seed_became_track.clear();
@@ -1246,6 +1271,8 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     local.vm_truth_seed_quality.clear(); local.vm_truth_seed_p.clear(); local.vm_truth_seed_qOverP.clear();
     local.vm_truth_seed_theta.clear(); local.vm_truth_seed_phi.clear();
     local.vm_truth_seed_loc0.clear(); local.vm_truth_seed_loc1.clear();
+    local.vm_truth_seed_perigee_x.clear(); local.vm_truth_seed_perigee_y.clear();
+    local.vm_truth_seed_perigee_z.clear();
     local.vm_truth_seed_sigma_qOverP.clear(); local.vm_truth_seed_sigma_theta.clear(); local.vm_truth_seed_sigma_phi.clear();
     local.vm_truth_seed_nHits.clear(); local.vm_truth_seed_charge.clear();
     local.vm_truth_seed_momentum_resolved.clear(); local.vm_truth_seed_became_track.clear();
@@ -1955,7 +1982,8 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     const auto fillSeeds = [&](const auto& seeds, const auto& trajectories,
                                const auto& trajectoriesUnfiltered, bool haveUnfiltered,
                                auto& quality, auto& p, auto& qOverP, auto& theta, auto& phi,
-                               auto& loc0, auto& loc1, auto& sigQ, auto& sigTh, auto& sigPh,
+                               auto& loc0, auto& loc1, auto& perX, auto& perY, auto& perZ,
+                               auto& sigQ, auto& sigTh, auto& sigPh,
                                auto& nHits, auto& charge, auto& resolved, auto& became,
                                auto& madeUnfiltered, auto& survivedAmbiguity,
                                auto& nUnfiltered, auto& nFiltered) {
@@ -2004,6 +2032,14 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             phi.push_back(ph);
             loc0.push_back(l0);
             loc1.push_back(l1);
+            // The seed parameters are bound to a perigee line through this
+            // point: the origin for truth seeds, a point just upstream of the
+            // first hit for B0TripletSeeding. loc0/loc1/theta/phi are only
+            // IP quantities when it is the origin.
+            const auto perigee = seed->getPerigee();
+            perX.push_back(perigee.x);
+            perY.push_back(perigee.y);
+            perZ.push_back(perigee.z);
             sigQ.push_back(sq);
             sigTh.push_back(st);
             sigPh.push_back(sp);
@@ -2024,6 +2060,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     fillSeeds(stubSeeds, ckfTrajectories, ckfTrajectoriesUnfiltered, hasCkfTrajectoriesUnfiltered,
               local.vm_seed_quality, local.vm_seed_p, local.vm_seed_qOverP,
               local.vm_seed_theta, local.vm_seed_phi, local.vm_seed_loc0, local.vm_seed_loc1,
+              local.vm_seed_perigee_x, local.vm_seed_perigee_y, local.vm_seed_perigee_z,
               local.vm_seed_sigma_qOverP, local.vm_seed_sigma_theta, local.vm_seed_sigma_phi,
               local.vm_seed_nHits, local.vm_seed_charge, local.vm_seed_momentum_resolved, local.vm_seed_became_track,
               local.vm_seed_made_unfiltered_track, local.vm_seed_survived_ambiguity,
@@ -2031,6 +2068,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     fillSeeds(truthSeeds, tsTrajectories, tsTrajectoriesUnfiltered, hasTsTrajectoriesUnfiltered,
               local.vm_truth_seed_quality, local.vm_truth_seed_p, local.vm_truth_seed_qOverP,
               local.vm_truth_seed_theta, local.vm_truth_seed_phi, local.vm_truth_seed_loc0, local.vm_truth_seed_loc1,
+              local.vm_truth_seed_perigee_x, local.vm_truth_seed_perigee_y, local.vm_truth_seed_perigee_z,
               local.vm_truth_seed_sigma_qOverP, local.vm_truth_seed_sigma_theta, local.vm_truth_seed_sigma_phi,
               local.vm_truth_seed_nHits, local.vm_truth_seed_charge, local.vm_truth_seed_momentum_resolved,
               local.vm_truth_seed_became_track,
@@ -2153,7 +2191,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
     // primary for stub rows and on the row's own particle for truth-seeded
     // rows, via (tgtMcIdx, tgtMcCol).
     const auto pushUnfRow = [&](const auto& state, int station, bool isOutlier, bool isMeas,
-                                unsigned status, int seedPos, int chain, int rowMcIdx,
+                                int status, int seedPos, int chain, int rowMcIdx,
                                 std::uint32_t rowMcCol, int tgtMcIdx,
                                 std::uint32_t tgtMcCol) {
         // Per-state compatibility for the measurement-selection
@@ -2167,7 +2205,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             stateCompat = stateInnovCompat(state, innov0, innov1);
         }
         local.vm_ckfdiag_unf_seedpos.push_back(seedPos);
-        local.vm_ckfdiag_unf_status.push_back(static_cast<int>(status));
+        local.vm_ckfdiag_unf_status.push_back(status);
         local.vm_ckfdiag_unf_station.push_back(station);
         local.vm_ckfdiag_unf_kind.push_back(stateKind);
         local.vm_ckfdiag_unf_chi2.push_back(stateCompat.chi2);
@@ -2297,11 +2335,21 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         hasCkfActsStatesUnfiltered && hasCkfActsTracksUnfiltered &&
         !ckfActsTrackStatesUnfilt.empty() && ckfActsTrackStatesUnfilt.front() != nullptr &&
         !ckfActsTracksUnfilt.empty() && ckfActsTracksUnfilt.front() != nullptr;
+    // The ckf_status/ckf_find_err columns, the zero-state find-failure markers
+    // and the rejected candidates are written only by a CKFTracking with B0
+    // diagnostics (tom-bleher/EICrecon). Upstream keeps just the surviving
+    // tracks and the "seed" column, so without ckf_status every row would look
+    // accepted. Their absence is recorded instead of being read as acceptance.
+    bool haveCkfStatus = false;
+    local.m_ckfdiagStatusAvailable = -1;
     if (haveCkfActsUnfilt) {
         Acts::TrackContainer<Acts::ConstVectorTrackContainer,
                              Acts::ConstVectorMultiTrajectory,
                              Acts::detail::ConstRefHolder>
             unfiltContainer(*ckfActsTracksUnfilt.front(), *ckfActsTrackStatesUnfilt.front());
+        haveCkfStatus = unfiltContainer.hasColumn("ckf_status");
+        local.m_ckfdiagStatusAvailable = haveCkfStatus ? 1 : 0;
+        const bool haveCkfFindErr = unfiltContainer.hasColumn("ckf_find_err");
         Acts::ConstProxyAccessor<unsigned int> unfiltSeed("seed");
         Acts::ConstProxyAccessor<unsigned int> unfiltStatus("ckf_status");
         Acts::ConstProxyAccessor<unsigned int> unfiltFindErr("ckf_find_err");
@@ -2318,16 +2366,11 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 continue;
             }
             CkfDiagCand cand;
-            try {
+            if (haveCkfStatus) {
                 cand.status = unfiltStatus(track);
-            } catch (...) {
-                // Pre-diagnostics reco: rows without a status are accepted.
-                cand.status = b0trk::ckfdiag::kAccepted;
             }
-            try {
+            if (haveCkfFindErr) {
                 cand.findErr = unfiltFindErr(track);
-            } catch (...) {
-                cand.findErr = 0;
             }
             if (track.nTrackStates() == 0) {
                 cand.isMarker = true;
@@ -2368,7 +2411,8 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 }
                 // One row per physics state on a mapped B0 station, for every
                 // candidate (accepted and rejected); see pushUnfRow.
-                pushUnfRow(state, station, isOutlier, isMeas, cand.status,
+                pushUnfRow(state, station, isOutlier, isMeas,
+                           haveCkfStatus ? static_cast<int>(cand.status) : -1,
                            static_cast<int>(seedPos), 0, local.m_selPrimaryMcIndex,
                            local.m_selPrimaryMcCollectionID, local.m_selPrimaryMcIndex,
                            local.m_selPrimaryMcCollectionID);
@@ -2512,6 +2556,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                              Acts::detail::ConstRefHolder>
             tsUnfiltContainer(*tsActsTracksUnfilt.front(), *tsActsTrackStatesUnfilt.front());
         Acts::ConstProxyAccessor<unsigned int> tsUnfiltSeed("seed");
+        const bool haveTsStatus = tsUnfiltContainer.hasColumn("ckf_status");
         Acts::ConstProxyAccessor<unsigned int> tsUnfiltStatus("ckf_status");
         const auto nTsUnfiltTracks = static_cast<int>(tsUnfiltContainer.size());
         for (int t = 0; t < nTsUnfiltTracks; ++t) {
@@ -2525,11 +2570,7 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             if (seedPos >= truthSeeds.size() || truthSeeds[seedPos] == nullptr) {
                 continue;
             }
-            unsigned status = b0trk::ckfdiag::kAccepted;
-            try {
-                status = tsUnfiltStatus(track);
-            } catch (...) {
-            }
+            const int status = haveTsStatus ? static_cast<int>(tsUnfiltStatus(track)) : -1;
             // Kinematic truth-seed -> MC match first (covers rejected
             // candidates with no EDM track); EDM associations as fallback.
             int mcIndex = tsSeedMcKin[seedPos].first;
@@ -2865,7 +2906,8 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
             }
             const Acts::Vector3 dir = phit / pmag;
             const double qop = static_cast<double>(charge) / pmag;
-            const double time = local.vm_time[ih];
+            // SimTrackerHit time is in ns; ACTS measures time in length units.
+            const double time = local.vm_time[ih] * Acts::UnitConstants::ns;
             const auto key = std::make_tuple(local.vm_plane[ih], local.vm_module[ih],
                                              local.vm_sensor[ih]);
             const auto sit = m_sensorSurface.find(key);
@@ -3041,6 +3083,13 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                     }
                 }
             }
+        }
+        if (haveCkfActsUnfilt && !haveCkfStatus) {
+            // Only surviving tracks were stored: the candidate count and the
+            // best candidate's status are unknown, and a seed without a track
+            // cannot be told apart from a failed or empty search.
+            nCand = -1;
+            bestStatus = -1;
         }
         local.vm_ckfdiag_n_candidates.push_back(nCand);
         local.vm_ckfdiag_n_accepted.push_back(nAcc);
@@ -3503,6 +3552,10 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
                 const int typeMask = trackStateTypeMask(flags);
                 const bool physicsState =
                     (typeMask & (kStateMeasurement | kStateOutlier | kStateHole)) != 0;
+                if (!physicsState && !m_writeNonPhysicsStates) {
+                    ++out.nMapUnmappedNonPhysics;
+                    continue;
+                }
 
                 double globalX = nan;
                 double globalY = nan;
@@ -3945,6 +3998,13 @@ void B0Trackers::Process(const std::shared_ptr<const JEvent>& event) {
         swap(this->vm_ckfdiag_best_station_mask, local.vm_ckfdiag_best_station_mask);
         swap(this->vm_ckfdiag_cand_per_station, local.vm_ckfdiag_cand_per_station);
         swap(this->m_ckfdiagMaxStation, local.m_ckfdiagMaxStation);
+        swap(this->m_ckfdiagStatusAvailable, local.m_ckfdiagStatusAvailable);
+        swap(this->vm_seed_perigee_x, local.vm_seed_perigee_x);
+        swap(this->vm_seed_perigee_y, local.vm_seed_perigee_y);
+        swap(this->vm_seed_perigee_z, local.vm_seed_perigee_z);
+        swap(this->vm_truth_seed_perigee_x, local.vm_truth_seed_perigee_x);
+        swap(this->vm_truth_seed_perigee_y, local.vm_truth_seed_perigee_y);
+        swap(this->vm_truth_seed_perigee_z, local.vm_truth_seed_perigee_z);
         swap(this->vm_ckfdiag_unf_seedpos, local.vm_ckfdiag_unf_seedpos);
         swap(this->vm_ckfdiag_unf_status, local.vm_ckfdiag_unf_status);
         swap(this->vm_ckfdiag_unf_station, local.vm_ckfdiag_unf_station);

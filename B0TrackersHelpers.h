@@ -11,7 +11,7 @@
 
 namespace b0trk {
 
-inline constexpr int kSchemaVersion = 10;
+inline constexpr int kSchemaVersion = 11;
 
 inline constexpr int kMapUnresolved = 0;
 inline constexpr int kMapExact      = 1;

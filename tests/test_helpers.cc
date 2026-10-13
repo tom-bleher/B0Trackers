@@ -113,7 +113,7 @@ int main() {
     }
     CHECK(closeTo(wrapPi(0.1), 0.1));
 
-    CHECK(kSchemaVersion == 10);
+    CHECK(kSchemaVersion == 11);
 
     CHECK(tsloc::classifyLocal(true, true) == tsloc::kLocalOk);
     CHECK(tsloc::classifyLocal(true, false) == tsloc::kLocalTargetBug);
